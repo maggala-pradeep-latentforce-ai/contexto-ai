@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Contexto</title>
+<style>
+  html, body {
+    margin: 0; padding: 0; width: 80px; height: 80px;
+    background: transparent; overflow: hidden;
+    -webkit-user-select: none; user-select: none;
+    display: flex; align-items: center; justify-content: center;
+  }
+  /* Gradient ring wrapper — the button's own solid circle sits inside it,
+     inset by the ring's thickness, like an avatar with a colored border. */
+  .ring {
+    width: 56px; height: 56px; border-radius: 50%;
+    padding: 2px;
+    background: linear-gradient(135deg, #6c74e8, #0ea5b8);
+    /* Dragging is handled manually in JS, not via -webkit-app-region: drag —
+       that CSS property intercepts mousedown at the OS level and swallows
+       click events entirely, so the button would move but never open. */
+    cursor: grab;
+    filter: drop-shadow(0 4px 14px rgba(28,28,40,0.28));
+    transition: transform 0.12s ease;
+  }
+  .ring:active { cursor: grabbing; transform: scale(0.96); }
+  button {
+    all: unset;
+    width: 100%; height: 100%; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    background: #ffffff;
+    cursor: pointer;
+  }
+  button:hover { background: #f5f6f8; }
+  img {
+    width: 30px; height: 30px; object-fit: contain;
+    pointer-events: none;
+  }
+</style>
+</head>
+<body>
+  <div class="ring">
+    <button id="launcherBtn" title="Open / minimize Contexto (⇧⌘K) — drag to move">
+      <img src="./icons/icon48.png" alt="">
+    </button>
+  </div>
+  <script src="./launcher.js"></script>
+</body>
+</html>

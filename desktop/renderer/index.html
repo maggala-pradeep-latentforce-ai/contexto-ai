@@ -1,0 +1,217 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Contexto AI</title>
+<link rel="stylesheet" href="./index.css">
+</head>
+<body>
+<div class="app" id="app">
+
+  <!-- ── Main View ── -->
+  <div id="mainView">
+
+    <header class="header">
+      <div class="header-left">
+        <img id="logoImg" src="./icons/icon48.png" class="logo-img" alt="">
+        <span class="logo-text">Contexto <span class="logo-ai">AI</span></span>
+      </div>
+      <div class="header-right">
+        <span class="clip-badge" id="clipCount">0 items</span>
+        <button class="icon-btn" id="themeBtn" title="Toggle dark / light theme">
+          <svg id="themeIconMoon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/>
+          </svg>
+          <svg id="themeIconSun" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none">
+            <circle cx="12" cy="12" r="4"/>
+            <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
+          </svg>
+        </button>
+        <button class="icon-btn" id="settingsBtn" title="Settings">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="3"/>
+            <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/>
+          </svg>
+        </button>
+        <button class="icon-btn" id="clearBtn" title="Clear all">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/>
+            <path d="M10 11v6M14 11v6M9 6V4h6v2"/>
+          </svg>
+        </button>
+        <button class="icon-btn" id="hideBtn" title="Hide panel (⇧⌘K)">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M18 6L6 18M6 6l12 12"/>
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <!-- AI Status bar -->
+    <div class="ai-status" id="aiStatus" style="display:none">
+      <span class="ai-dot"></span>
+      <span id="aiStatusText">AI thinking...</span>
+    </div>
+
+    <!-- Composer -->
+    <div class="composer">
+      <textarea id="noteInput" placeholder="Ask anything or save a note… e.g. what is my api key?" rows="2" spellcheck="false"></textarea>
+      <button class="send-btn" id="saveNoteBtn" title="Send (Enter)">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
+        </svg>
+      </button>
+    </div>
+    <div class="composer-hint" id="composerHint"></div>
+
+    <!-- Search -->
+    <div class="search-wrap">
+      <div class="search-box">
+        <svg class="search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>
+        </svg>
+        <input id="searchInput" type="text" placeholder="Search clips and notes..." autocomplete="off" spellcheck="false">
+        <button class="clear-x" id="clearSearch" style="display:none">
+          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+        </button>
+      </div>
+    </div>
+
+    <!-- Filter pills -->
+    <div class="filters">
+      <button class="pill active" data-filter="all">All</button>
+      <button class="pill" data-filter="note">Notes</button>
+      <button class="pill" data-filter="text">Clips</button>
+      <button class="pill" data-filter="link">Links</button>
+      <button class="pill" data-filter="today">Today</button>
+    </div>
+
+    <!-- Feed -->
+    <main class="feed">
+      <div class="empty-state" id="emptyState">
+        <div class="empty-orb">
+          <svg width="34" height="34" viewBox="0 0 24 24" fill="none">
+            <path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2" stroke="var(--accent)" stroke-width="1.5" stroke-linecap="round"/>
+            <rect x="9" y="3" width="6" height="4" rx="1" stroke="var(--accent)" stroke-width="1.5"/>
+            <path d="M9 12h6M9 16h4" stroke="var(--accent2)" stroke-width="1.5" stroke-linecap="round"/>
+          </svg>
+        </div>
+        <p class="empty-title">Nothing here yet</p>
+        <p class="empty-sub">Copy text anywhere on your Mac, or type a note above to get started.</p>
+        <p class="empty-hotkey">Press <kbd>⇧⌘K</kbd> anytime to summon this panel</p>
+      </div>
+      <div id="clipsList"></div>
+    </main>
+  </div>
+
+  <!-- ── Settings View ── -->
+  <div id="settingsView" style="display:none">
+    <header class="header">
+      <div class="header-left">
+        <button class="icon-btn" id="backBtn" title="Back">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M19 12H5M12 5l-7 7 7 7"/>
+          </svg>
+        </button>
+        <span class="logo-text">Settings</span>
+      </div>
+    </header>
+
+    <div class="settings-body">
+      <div class="settings-section">
+        <div class="settings-label">AI Model</div>
+        <div class="settings-desc">Powered by your API key — OpenAI, Anthropic Claude, Google Gemini, or your own OpenAI-compatible proxy. Data stays local — only query context is sent.</div>
+      </div>
+
+      <div class="settings-field">
+        <label class="field-label">API Key</label>
+        <div class="field-row">
+          <input type="password" id="apiKeyInput" placeholder="sk-..." autocomplete="off" spellcheck="false">
+          <button class="toggle-vis" id="toggleApiKey" title="Show/hide">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>
+            </svg>
+          </button>
+        </div>
+        <div class="field-hint">Stored locally on this machine — never transmitted except to your proxy.</div>
+      </div>
+
+      <div class="settings-field">
+        <label class="field-label">Model</label>
+        <input id="modelSelect" list="modelPresets" placeholder="gpt-4o-mini" autocomplete="off" spellcheck="false">
+        <datalist id="modelPresets">
+          <option value="gpt-4o-mini">GPT-4o Mini (fast, cheap)</option>
+          <option value="gpt-4o">GPT-4o (smarter)</option>
+          <option value="gpt-3.5-turbo">GPT-3.5 Turbo (cheapest)</option>
+          <option value="claude-haiku-20240307">Claude Haiku (fast)</option>
+          <option value="claude-3-5-haiku-20241022">Claude 3.5 Haiku</option>
+          <option value="gemini-2.0-flash">Gemini 2.0 Flash (fast, cheap)</option>
+          <option value="gemini-1.5-pro">Gemini 1.5 Pro (smarter)</option>
+          <!-- LatentStack — from its "Allowed models" list, gateway is OpenAI-compatible -->
+          <option value="anthropic/claude-fable-5">LatentStack — Claude Fable 5</option>
+          <option value="anthropic/claude-haiku-4-5">LatentStack — Claude Haiku 4.5 (fast)</option>
+          <option value="anthropic/claude-opus-4-6">LatentStack — Claude Opus 4.6</option>
+          <option value="anthropic/claude-opus-4-7">LatentStack — Claude Opus 4.7</option>
+          <option value="anthropic/claude-opus-4-8">LatentStack — Claude Opus 4.8</option>
+          <option value="anthropic/claude-opus-5">LatentStack — Claude Opus 5</option>
+          <option value="anthropic/claude-sonnet-4">LatentStack — Claude Sonnet 4</option>
+          <option value="anthropic/claude-sonnet-4-6">LatentStack — Claude Sonnet 4.6</option>
+          <option value="anthropic/claude-sonnet-5">LatentStack — Claude Sonnet 5</option>
+          <option value="cohere/north-mini-code:free">LatentStack — Cohere North Mini Code (free)</option>
+          <option value="deepseek/deepseek-v4-flash">LatentStack — DeepSeek v4 Flash (fast)</option>
+          <option value="deepseek/deepseek-v4-pro">LatentStack — DeepSeek v4 Pro</option>
+          <option value="gemini-3-flash-preview">LatentStack — Gemini 3 Flash (preview)</option>
+          <option value="gemini-3.1-pro-preview">LatentStack — Gemini 3.1 Pro (preview)</option>
+          <option value="gemini-3.6-flash">LatentStack — Gemini 3.6 Flash</option>
+          <option value="gemini-3.7-flash">LatentStack — Gemini 3.7 Flash</option>
+          <option value="google/gemma-4-26b-a4b-it">LatentStack — Gemma 4 26B</option>
+          <option value="minimax/minimax-m2.1">LatentStack — MiniMax M2.1</option>
+          <option value="minimax/minimax-m2.5">LatentStack — MiniMax M2.5</option>
+          <option value="minimax/minimax-m3">LatentStack — MiniMax M3</option>
+          <option value="moonshotai/kimi-k2.5">LatentStack — Kimi K2.5</option>
+          <option value="moonshotai/kimi-k2.6">LatentStack — Kimi K2.6</option>
+          <option value="moonshotai/kimi-k2.7-code">LatentStack — Kimi K2.7 Code</option>
+          <option value="moonshotai/kimi-k3">LatentStack — Kimi K3</option>
+          <option value="o1">LatentStack — OpenAI o1 (reasoning)</option>
+          <option value="openai/gpt-5-mini">LatentStack — GPT-5 Mini</option>
+          <option value="openai/gpt-5-nano">LatentStack — GPT-5 Nano (fastest)</option>
+          <option value="openai/gpt-5.4-mini">LatentStack — GPT-5.4 Mini</option>
+          <option value="openai/gpt-5.6-luna">LatentStack — GPT-5.6 Luna</option>
+          <option value="openai/gpt-5.6-terra">LatentStack — GPT-5.6 Terra</option>
+          <option value="openai/gpt-6-astra">LatentStack — GPT-6 Astra</option>
+          <option value="qwen/qwen3.5-122b-a10b">LatentStack — Qwen 3.5 122B</option>
+          <option value="qwen/qwen3.5-9b">LatentStack — Qwen 3.5 9B</option>
+          <option value="z-ai/glm-5.2">LatentStack — GLM 5.2</option>
+        </datalist>
+        <div class="field-hint">Pick a preset, or type any model id your proxy expects. LatentStack presets need Proxy URL set to <code>https://latentstack.dev/v1/chat/completions</code> below, with your <code>ls-...</code> key as the API Key.</div>
+      </div>
+
+      <div class="settings-field">
+        <label class="field-label">Proxy URL</label>
+        <input type="text" id="proxyInput" placeholder="https://api.openai.com/v1/chat/completions" autocomplete="off" spellcheck="false">
+        <div class="field-hint">Leave default to call Claude/Gemini models directly with your key. Set any OpenAI-compatible endpoint (e.g. <code>https://latentstack.dev/v1/chat/completions</code>) to route every model through that proxy instead.</div>
+      </div>
+
+      <div class="settings-actions">
+        <button class="save-settings-btn" id="saveSettingsBtn">Save Settings</button>
+        <div class="settings-status" id="settingsStatus"></div>
+      </div>
+
+      <div class="settings-section" style="margin-top:20px">
+        <div class="settings-label">Shortcut</div>
+        <div class="settings-desc">Click the launcher button (bottom-right of your screen) or press <kbd>⇧⌘K</kbd> to open or minimize this panel from anywhere.</div>
+      </div>
+
+      <div class="settings-section">
+        <div class="settings-label">Privacy</div>
+        <div class="settings-desc">All clipboard data and notes are stored only on this machine. When you ask a question, the top 8 most relevant items are sent as context to the LLM — nothing else. No analytics, no telemetry.</div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<script type="module" src="./index.js"></script>
+</body>
+</html>

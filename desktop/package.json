@@ -1,0 +1,36 @@
+{
+  "name": "contexto-ai",
+  "version": "1.0.0",
+  "description": "Contexto AI — a slide-out AI clipboard panel that lives on your desktop, summoned with a global hotkey. 100% local storage.",
+  "author": "Contexto AI",
+  "license": "MIT",
+  "main": "main/index.js",
+  "bin": {
+    "contexto-ai": "bin/contexto-ai.js"
+  },
+  "files": [
+    "main",
+    "renderer",
+    "build",
+    "bin"
+  ],
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder",
+    "postinstall": "node bin/ensure-electron.js"
+  },
+  "devDependencies": {
+    "electron": "^30.0.0",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "dev.contexto.desktop",
+    "productName": "Contexto AI",
+    "directories": { "output": "dist" },
+    "files": ["main/**/*", "renderer/**/*", "build/**/*"],
+    "publish": null,
+    "mac": { "icon": "build/icon.png", "category": "public.app-category.productivity" },
+    "win": { "icon": "build/icon.png" },
+    "linux": { "icon": "build/icon.png" }
+  }
+}
