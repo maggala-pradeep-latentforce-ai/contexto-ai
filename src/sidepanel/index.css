@@ -126,6 +126,38 @@ body {
 }
 .pill:hover { border-color: var(--accent); color: var(--accent); }
 .pill.active { background: rgba(var(--accent-rgb),0.12); border-color: var(--accent); color: var(--accent); }
+.category-filter {
+  background: var(--surface); border: 1px solid var(--border); color: var(--text2);
+  padding: 4px 8px; border-radius: 20px; font-size: 11.5px; font-family: inherit;
+  cursor: pointer; margin-left: auto; flex-shrink: 0; -webkit-appearance: none;
+}
+.category-filter:hover { border-color: var(--accent); color: var(--accent); }
+
+/* ── Bulk selection ── */
+.icon-btn.active { color: var(--accent); border-color: var(--accent); }
+.bulk-bar {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 7px 14px; background: rgba(var(--accent-rgb),0.08);
+  border-bottom: 1px solid var(--border); flex-shrink: 0; font-size: 11.5px;
+}
+.bulk-count { color: var(--accent); font-weight: 600; flex-shrink: 0; }
+.bulk-actions { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
+.bulk-btn {
+  background: var(--surface); border: 1px solid var(--border); color: var(--text2);
+  padding: 4px 10px; border-radius: 14px; font-size: 11px; font-weight: 600;
+  cursor: pointer; font-family: inherit; transition: border-color 0.14s, color 0.14s;
+}
+.bulk-btn:hover { border-color: var(--accent); color: var(--accent); }
+.bulk-btn.danger:hover { border-color: var(--red); color: var(--red); }
+.card-select {
+  position: absolute; top: 9px; right: 9px; width: 17px; height: 17px; z-index: 1;
+  border-radius: 5px; border: 1.5px solid var(--border); background: var(--bg);
+  display: flex; align-items: center; justify-content: center; color: #fff;
+}
+.card-select.checked { background: var(--accent); border-color: var(--accent); }
+.select-mode .clip-card { padding-right: 34px; }
+.select-mode .clip-card.is-selected { border-color: var(--accent); background: rgba(var(--accent-rgb),0.08); }
+.select-mode .card-actions, .select-mode .task-check { pointer-events: none; opacity: 0.35; }
 
 /* ── Feed ── */
 .feed {
@@ -183,6 +215,15 @@ body {
 }
 .ts-dismiss:hover { color: var(--text); }
 
+.archived-strip {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  margin-top: 8px; padding: 5px 8px; border-radius: var(--r-sm);
+  background: var(--surface2); border: 1px dashed var(--border);
+  font-size: 11px; color: var(--text3);
+}
+.pill-archived { color: var(--text3); }
+.pill-archived.active { background: var(--surface2); border-color: var(--text3); color: var(--text2); }
+
 .card-foot { display: flex; align-items: center; gap: 6px; margin-top: 9px; }
 .card-actions {
   display: flex; gap: 4px; margin-left: auto;
@@ -197,6 +238,10 @@ body {
 .badge-text { background: rgba(var(--accent-rgb),0.12); color: var(--accent); }
 .badge-link { background: rgba(var(--accent2-rgb),0.12); color: var(--accent2); }
 .badge-note { background: rgba(var(--green-rgb),0.12); color: var(--green); }
+.badge-category {
+  text-transform: none; letter-spacing: normal; font-weight: 600;
+  background: var(--surface2); color: var(--text2); border: 1px solid var(--border);
+}
 
 .act-btn {
   background: var(--bg); border: 1px solid var(--border); color: var(--text2);
@@ -318,6 +363,14 @@ mark { background: rgba(var(--accent-rgb),0.2); color: var(--mark-text); border-
   color: var(--text); font-size: 11.5px; padding: 5px 6px; outline: none; font-family: inherit; cursor: pointer;
 }
 .qt-recurring { display: flex; align-items: center; gap: 4px; font-size: 11.5px; color: var(--text2); cursor: pointer; }
+.qt-days { display: flex; gap: 4px; margin-top: 7px; }
+.qt-day {
+  width: 24px; height: 24px; border-radius: 50%; border: 1px solid var(--border);
+  background: var(--bg); color: var(--text2); font-size: 10.5px; font-weight: 700;
+  cursor: pointer; font-family: inherit; transition: border-color 0.14s, color 0.14s, background 0.14s;
+}
+.qt-day:hover { border-color: var(--accent); color: var(--accent); }
+.qt-day.active { background: var(--accent); border-color: var(--accent); color: #fff; }
 .qt-actions { display: flex; justify-content: flex-end; gap: 6px; margin-top: 9px; }
 .qt-cancel {
   background: none; border: 1px solid var(--border); color: var(--text2);
@@ -348,6 +401,13 @@ mark { background: rgba(var(--accent-rgb),0.2); color: var(--mark-text); border-
 .ts-item.ts-done { color: var(--green); }
 .ts-item.ts-overdue { color: var(--red); }
 .ts-item.ts-upcoming { color: var(--accent); }
+.ts-reschedule-all {
+  margin-left: auto; background: none; border: 1px solid var(--red); color: var(--red);
+  font-size: 10.5px; font-weight: 600; padding: 3px 9px; border-radius: 12px;
+  cursor: pointer; font-family: inherit; transition: background 0.14s, color 0.14s;
+}
+.ts-reschedule-all:hover { background: var(--red); color: #fff; }
+.select-mode .task-summary .ts-reschedule-all { pointer-events: none; opacity: 0.35; }
 /* Left border = status at a glance: neutral (pending, no urgency), accent
    (has a deadline, not overdue), red (overdue), green (done). */
 .clip-card.is-task { padding: 10px 13px 10px 11px; border-left: 3px solid var(--border); }

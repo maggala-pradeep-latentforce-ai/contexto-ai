@@ -40,6 +40,11 @@
             <path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/>
           </svg>
         </button>
+        <button class="icon-btn" id="selectModeBtn" title="Select multiple items">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="3" width="18" height="18" rx="3"/><polyline points="8 12 11 15 16 9"/>
+          </svg>
+        </button>
         <button class="icon-btn" id="clearBtn" title="Clear all">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/>
@@ -90,7 +95,16 @@
           <option value="medium">Medium</option>
           <option value="high">High</option>
         </select>
-        <label class="qt-recurring"><input type="checkbox" id="qtRecurring"> Repeat daily</label>
+        <label class="qt-recurring"><input type="checkbox" id="qtRecurring"> Repeat</label>
+      </div>
+      <div class="qt-days" id="qtDays" style="display:none">
+        <button type="button" class="qt-day" data-day="0">S</button>
+        <button type="button" class="qt-day" data-day="1">M</button>
+        <button type="button" class="qt-day" data-day="2">T</button>
+        <button type="button" class="qt-day" data-day="3">W</button>
+        <button type="button" class="qt-day" data-day="4">T</button>
+        <button type="button" class="qt-day" data-day="5">F</button>
+        <button type="button" class="qt-day" data-day="6">S</button>
       </div>
       <div class="qt-actions">
         <button class="qt-cancel" id="qtCancel">Cancel</button>
@@ -119,6 +133,22 @@
       <button class="pill" data-filter="text">Clips</button>
       <button class="pill" data-filter="link">Links</button>
       <button class="pill" data-filter="today">Today</button>
+      <button class="pill pill-archived" data-filter="archived" id="archivedPill" style="display:none">Archived</button>
+      <select id="categoryFilter" class="category-filter" title="Filter by category">
+        <option value="all">All categories</option>
+      </select>
+    </div>
+
+    <!-- Bulk selection action bar -->
+    <div class="bulk-bar" id="bulkBar" style="display:none">
+      <span class="bulk-count" id="bulkCount">0 selected</span>
+      <div class="bulk-actions">
+        <button class="bulk-btn" id="bulkSelectAll">Select all</button>
+        <button class="bulk-btn" id="bulkAddTasks">+ Task</button>
+        <button class="bulk-btn" id="bulkExport">Export</button>
+        <button class="bulk-btn danger" id="bulkDelete">Delete</button>
+        <button class="bulk-btn" id="bulkCancel">Done</button>
+      </div>
     </div>
 
     <!-- Feed -->

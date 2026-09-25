@@ -18,6 +18,7 @@ const MSG = {
   ADD_TASK:        'ADD_TASK',
   TOGGLE_TASK:     'TOGGLE_TASK',
   RESCHEDULE_TASK: 'RESCHEDULE_TASK',
+  SET_ARCHIVED:    'SET_ARCHIVED',
   EXPORT_DATA:     'EXPORT_DATA',
   IMPORT_DATA:     'IMPORT_DATA',
   QUERY_NOTES:     'QUERY_NOTES',
@@ -38,6 +39,7 @@ const OFFSCREEN_MSGS = new Set([
   MSG.ADD_TASK,
   MSG.TOGGLE_TASK,
   MSG.RESCHEDULE_TASK,
+  MSG.SET_ARCHIVED,
   MSG.EXPORT_DATA,
   MSG.IMPORT_DATA,
   MSG.QUERY_NOTES,
@@ -384,16 +386,21 @@ async function orchestrate(userInput, allClips) {
           '{"tasks": [{"text": "<clean task description, no dates/times in it>", ' +
           '"dueDate": "<YYYY-MM-DD, or null if no specific deadline>", ' +
           '"dueTime": "<HH:MM in 24-hour time, or null if no specific time>", ' +
-          '"recurring": <true only if THIS task repeats every day — judge each task independently, ' +
+          '"recurring": <true only if THIS task repeats — judge each task independently, ' +
           'a "daily tasks" heading does not automatically make every item recurring if one sounds one-time>, ' +
+          '"recurDays": <if recurring and the message names specific days (e.g. "every Monday and Wednesday", ' +
+          '"on weekdays", "Tue and Thu"), an array of weekday numbers 0=Sunday..6=Saturday it repeats on; ' +
+          'if recurring but no specific days are named (e.g. "every day", "daily"), use null to mean every day; ' +
+          'if not recurring, use null>, ' +
           '"priority": "<high, medium, or null — high only for words like urgent/asap/important/critical, ' +
           'medium only if mildly emphasized, null for ordinary tasks — most tasks should be null>}]}. ' +
           'Resolve relative dates ("tomorrow", "next friday") and times ("10pm", "at 9") into real values using today\'s date/time above. ' +
           'Example: "remind me to call mom tomorrow at 3pm" -> ' +
-          '{"tasks":[{"text":"call mom","dueDate":"<tomorrow\'s date>","dueTime":"15:00","recurring":false,"priority":null}]}. ' +
-          'Example: "urgent: submit the report today, also every morning I should stretch" -> ' +
-          '{"tasks":[{"text":"submit the report","dueDate":"<today\'s date>","dueTime":null,"recurring":false,"priority":"high"},' +
-          '{"text":"stretch","dueDate":null,"dueTime":null,"recurring":true,"priority":null}]}.',
+          '{"tasks":[{"text":"call mom","dueDate":"<tomorrow\'s date>","dueTime":"15:00","recurring":false,"recurDays":null,"priority":null}]}. ' +
+          'Example: "urgent: submit the report today, also every morning I should stretch, and gym every Monday and Thursday" -> ' +
+          '{"tasks":[{"text":"submit the report","dueDate":"<today\'s date>","dueTime":null,"recurring":false,"recurDays":null,"priority":"high"},' +
+          '{"text":"stretch","dueDate":null,"dueTime":null,"recurring":true,"recurDays":null,"priority":null},' +
+          '{"text":"gym","dueDate":null,"dueTime":null,"recurring":true,"recurDays":[1,4],"priority":null}]}.',
       },
       { role: 'user', content: input },
     ], { maxTokens: 400, temperature: 0 });
@@ -405,7 +412,7 @@ async function orchestrate(userInput, allClips) {
       if (parsed && Array.isArray(parsed.tasks) && parsed.tasks.length) tasks = parsed.tasks;
     } catch { tasks = null; }
 
-    if (!tasks) tasks = [{ text: input, dueDate: null, dueTime: null, recurring: false, priority: null }];
+    if (!tasks) tasks = [{ text: input, dueDate: null, dueTime: null, recurring: false, recurDays: null, priority: null }];
 
     return {
       action: 'task',
@@ -415,6 +422,7 @@ async function orchestrate(userInput, allClips) {
         dueDate: (t && t.dueDate) || null,
         dueTime: (t && t.dueTime) || null,
         recurring: !!(t && t.recurring),
+        recurDays: (t && Array.isArray(t.recurDays) && t.recurDays.length) ? t.recurDays.filter((d) => Number.isInteger(d) && d >= 0 && d <= 6) : null,
         priority: (t && (t.priority === 'high' || t.priority === 'medium')) ? t.priority : null,
       })),
     };
@@ -454,7 +462,7 @@ async function orchestrate(userInput, allClips) {
       .slice(0, 3)
       .map((c) => ({
         id: c.id, content: c.content, domain: c.domain, type: c.type, createdAt: c.createdAt, sensitive: c.sensitive,
-        dueDate: c.dueDate, dueTime: c.dueTime, recurring: c.recurring,
+        dueDate: c.dueDate, dueTime: c.dueTime, recurring: c.recurring, recurDays: c.recurDays,
       }));
 
     if (!matches.length) return { action: 'edit', intent, matches: [] };
@@ -468,18 +476,26 @@ async function orchestrate(userInput, allClips) {
     // tomorrow" should keep the existing time), same date-resolution
     // approach as task creation — resolved against the real current date.
     if (top.type === 'task') {
+      const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+      const currentDays = Array.isArray(top.recurDays) && top.recurDays.length
+        ? top.recurDays.map((d) => dayNames[d]).join(', ')
+        : (top.recurring ? 'every day' : 'n/a');
       const raw = await callLLM([
         {
           role: 'system',
           content:
             'The user wants to reschedule an existing task. Today is: ' + formatNow() + '. ' +
             'The task currently has: dueDate=' + (top.dueDate || 'none') + ', dueTime=' + (top.dueTime || 'none') +
-            ', recurring=' + top.recurring + '. ' +
+            ', recurring=' + top.recurring + ', repeats on: ' + currentDays + '. ' +
             'Reply with ONLY a JSON object, no commentary: ' +
-            '{"dueDate": "<YYYY-MM-DD, or null for no deadline>", "dueTime": "<HH:MM 24-hour, or null>", "recurring": <true|false>}. ' +
+            '{"dueDate": "<YYYY-MM-DD, or null for no deadline>", "dueTime": "<HH:MM 24-hour, or null>", ' +
+            '"recurring": <true|false>, "recurDays": <array of weekday numbers 0=Sunday..6=Saturday if the user ' +
+            'names specific days, null if it should repeat every day or is not recurring>}. ' +
             'Keep any field the user does not mention unchanged from the current values above — ' +
-            'this is a partial edit, not a full replacement. ' +
-            'Example: current dueTime=22:00. User says "push this to tomorrow" -> dueDate becomes tomorrow\'s date, dueTime stays 22:00.',
+            'this is a partial edit, not a full replacement. Only include recurDays if the user is actually ' +
+            'changing which days it repeats on. ' +
+            'Example: current dueTime=22:00. User says "push this to tomorrow" -> dueDate becomes tomorrow\'s date, dueTime stays 22:00. ' +
+            'Example: user says "only do this on Mondays and Fridays now" -> recurring becomes true, recurDays becomes [1,5].',
         },
         { role: 'user', content: input },
       ], { maxTokens: 150, temperature: 0 });
@@ -494,6 +510,9 @@ async function orchestrate(userInput, allClips) {
         dueDate: sched && 'dueDate' in sched ? sched.dueDate : top.dueDate,
         dueTime: sched && 'dueTime' in sched ? sched.dueTime : top.dueTime,
         recurring: sched ? !!sched.recurring : top.recurring,
+        recurDays: sched && 'recurDays' in sched
+          ? ((Array.isArray(sched.recurDays) && sched.recurDays.length) ? sched.recurDays.filter((d) => Number.isInteger(d) && d >= 0 && d <= 6) : null)
+          : top.recurDays,
       };
     }
 

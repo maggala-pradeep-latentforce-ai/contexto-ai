@@ -10,6 +10,7 @@ var MSG = {
   ADD_TASK:      "ADD_TASK",
   TOGGLE_TASK:   "TOGGLE_TASK",
   RESCHEDULE_TASK:"RESCHEDULE_TASK",
+  SET_ARCHIVED:  "SET_ARCHIVED",
   EXPORT_DATA:   "EXPORT_DATA",
   IMPORT_DATA:   "IMPORT_DATA",
   EMBED_AND_SAVE:"EMBED_AND_SAVE",
@@ -21,6 +22,16 @@ var MSG = {
 function todayStr() {
   var d = new Date();
   return d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0") + "-" + String(d.getDate()).padStart(2,"0");
+}
+
+var WEEKDAY_ABBR = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+// A recurring task with recurDays set only actually applies on those
+// weekdays (0=Sunday..6=Saturday) — no recurDays (or empty) means every day,
+// same as the original all-days-recurring behavior.
+function taskAppliesToday(c) {
+  if (!c.recurring) return true;
+  if (!Array.isArray(c.recurDays) || !c.recurDays.length) return true;
+  return c.recurDays.indexOf(new Date().getDay()) !== -1;
 }
 
 // ── Proactive suggestions ────────────────────────────────────────────────────
@@ -42,17 +53,31 @@ function dismissSuggestion(id) {
   }
 }
 
-var allClips = [], activeFilter = "all", searchQuery = "", searchTimer;
-var searchInput, clearSearch, clipsList, emptyState, clipCount;
+var allClips = [], activeFilter = "all", activeCategory = "all", searchQuery = "", searchTimer;
+// Kept in sync with offscreen/index.js's CATEGORIES — only used here for
+// display labels/icons, the actual categorization happens at save time.
+var CATEGORIES = {
+  shopping: { label: "Shopping", icon: "🛒" },
+  travel:   { label: "Travel",   icon: "✈️" },
+  finance:  { label: "Finance",  icon: "💰" },
+  work:     { label: "Work",     icon: "💼" },
+  health:   { label: "Health",   icon: "🩺" },
+  learning: { label: "Learning", icon: "📚" },
+  personal: { label: "Personal", icon: "🏠" },
+};
+var selectMode = false, selectedIds = new Set(), lastRenderedClips = [];
+var searchInput, clearSearch, clipsList, emptyState, clipCount, categoryFilter, archivedPill;
 var clearBtn, settingsBtn, backBtn, saveSettingsBtn;
 var noteInput, saveNoteBtn, composerHint, aiStatus, aiStatusText;
 var apiKeyInput, proxyInput, modelSelect, toggleApiKey, settingsStatus;
 var mainView, settingsView;
 var themeBtn, themeIconMoon, themeIconSun;
-var quickTaskBtn, quickTaskForm, qtText, qtDate, qtTime, qtPriority, qtRecurring, qtCancel, qtSave;
+var quickTaskBtn, quickTaskForm, qtText, qtDate, qtTime, qtPriority, qtRecurring, qtDays, qtCancel, qtSave;
+var qtSelectedDays = [];
 var exportBtn, importBtn, importFile;
 var streakBadge, onboardTip, onboardTipText, onboardSkip, onboardNext;
 var cmdkBtn, cmdkOverlay, cmdkInput, cmdkList;
+var selectModeBtn, bulkBar, bulkCount, bulkSelectAll, bulkAddTasks, bulkExport, bulkDelete, bulkCancel;
 var hasApiKey = false;
 
 document.addEventListener("DOMContentLoaded", function () {
@@ -63,6 +88,8 @@ document.addEventListener("DOMContentLoaded", function () {
   clipsList     = document.getElementById("clipsList");
   emptyState    = document.getElementById("emptyState");
   clipCount     = document.getElementById("clipCount");
+  categoryFilter = document.getElementById("categoryFilter");
+  archivedPill  = document.getElementById("archivedPill");
   clearBtn      = document.getElementById("clearBtn");
   settingsBtn   = document.getElementById("settingsBtn");
   backBtn       = document.getElementById("backBtn");
@@ -87,6 +114,7 @@ document.addEventListener("DOMContentLoaded", function () {
   qtTime        = document.getElementById("qtTime");
   qtPriority    = document.getElementById("qtPriority");
   qtRecurring   = document.getElementById("qtRecurring");
+  qtDays        = document.getElementById("qtDays");
   qtCancel      = document.getElementById("qtCancel");
   qtSave        = document.getElementById("qtSave");
   exportBtn     = document.getElementById("exportBtn");
@@ -101,12 +129,21 @@ document.addEventListener("DOMContentLoaded", function () {
   cmdkOverlay   = document.getElementById("cmdkOverlay");
   cmdkInput     = document.getElementById("cmdkInput");
   cmdkList      = document.getElementById("cmdkList");
+  selectModeBtn = document.getElementById("selectModeBtn");
+  bulkBar       = document.getElementById("bulkBar");
+  bulkCount     = document.getElementById("bulkCount");
+  bulkSelectAll = document.getElementById("bulkSelectAll");
+  bulkAddTasks  = document.getElementById("bulkAddTasks");
+  bulkExport    = document.getElementById("bulkExport");
+  bulkDelete    = document.getElementById("bulkDelete");
+  bulkCancel    = document.getElementById("bulkCancel");
   var logoImg = document.getElementById("logoImg");
   if (logoImg) logoImg.addEventListener("error", function () { logoImg.style.display = "none"; });
   initTheme();
   initDataActions();
   initOnboarding();
   initCommandPalette();
+  initSelectMode();
   init();
 });
 
@@ -162,7 +199,7 @@ function checkStreak() {
   renderStreakBadge(streak);
   if (last === today) return;
 
-  var relevant = allClips.filter(function (c) { return c.type === "task" && (c.recurring || c.dueDate === today); });
+  var relevant = allClips.filter(function (c) { return c.type === "task" && ((c.recurring && taskAppliesToday(c)) || c.dueDate === today); });
   if (!relevant.length) return;
   var allDone = relevant.every(function (c) { return c.recurring ? c.recurringDone === today : !!c.done; });
   if (!allDone) return;
@@ -222,17 +259,20 @@ function playCelebrationChime() {
 }
 
 // ── Backup export/import ─────────────────────────────────────────────────────
+function downloadBackup(items) {
+  var blob = new Blob([JSON.stringify({ app: "contexto-ai", exportedAt: Date.now(), items: items }, null, 2)], { type: "application/json" });
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement("a");
+  a.href = url;
+  a.download = "contexto-backup-" + todayStr() + ".json";
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
 function initDataActions() {
   exportBtn.addEventListener("click", function () {
     send({ type: MSG.EXPORT_DATA }).then(function (r) {
       if (!r || !r.ok) { showToast("Export failed", "error"); return; }
-      var blob = new Blob([JSON.stringify({ app: "contexto-ai", exportedAt: Date.now(), items: r.items }, null, 2)], { type: "application/json" });
-      var url = URL.createObjectURL(blob);
-      var a = document.createElement("a");
-      a.href = url;
-      a.download = "contexto-backup-" + todayStr() + ".json";
-      document.body.appendChild(a); a.click(); document.body.removeChild(a);
-      URL.revokeObjectURL(url);
+      downloadBackup(r.items);
       showToast(r.items.length + " item(s) exported", "success");
     }).catch(function () { showToast("Export failed", "error"); });
   });
@@ -317,6 +357,10 @@ function init() {
       p.classList.add("active"); activeFilter = p.dataset.filter; renderFiltered();
     });
   });
+  categoryFilter.addEventListener("change", function () {
+    activeCategory = categoryFilter.value;
+    renderFiltered();
+  });
 
   clearBtn.addEventListener("click", confirmClearAll);
   settingsBtn.addEventListener("click", showSettings);
@@ -331,7 +375,24 @@ function init() {
   quickTaskBtn.addEventListener("click", function () {
     var opening = quickTaskForm.style.display === "none";
     quickTaskForm.style.display = opening ? "block" : "none";
-    if (opening) { qtText.value = ""; qtDate.value = ""; qtTime.value = ""; qtPriority.value = ""; qtRecurring.checked = false; qtText.focus(); }
+    if (opening) {
+      qtText.value = ""; qtDate.value = ""; qtTime.value = ""; qtPriority.value = ""; qtRecurring.checked = false;
+      qtSelectedDays = [];
+      qtDays.style.display = "none";
+      qtDays.querySelectorAll(".qt-day").forEach(function (b) { b.classList.remove("active"); });
+      qtText.focus();
+    }
+  });
+  qtRecurring.addEventListener("change", function () {
+    qtDays.style.display = qtRecurring.checked ? "flex" : "none";
+  });
+  qtDays.querySelectorAll(".qt-day").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var d = parseInt(btn.dataset.day, 10);
+      var i = qtSelectedDays.indexOf(d);
+      if (i === -1) qtSelectedDays.push(d); else qtSelectedDays.splice(i, 1);
+      btn.classList.toggle("active", i === -1);
+    });
   });
   qtCancel.addEventListener("click", function () { quickTaskForm.style.display = "none"; });
   qtSave.addEventListener("click", function () {
@@ -341,7 +402,9 @@ function init() {
       id: crypto.randomUUID(), text: text,
       dueDate: qtDate.value || null, dueTime: qtTime.value || null,
       priority: qtPriority.value || null,
-      recurring: qtRecurring.checked, createdAt: Date.now(),
+      recurring: qtRecurring.checked,
+      recurDays: (qtRecurring.checked && qtSelectedDays.length) ? qtSelectedDays.slice() : null,
+      createdAt: Date.now(),
     }}).then(function (sr) {
       if (sr && sr.ok) { showToast("Task added!", "success"); quickTaskForm.style.display = "none"; loadClips(); }
       else showToast("Couldn't add task", "error");
@@ -542,7 +605,7 @@ function handleSubmit() {
         Promise.all(tasksToAdd.map(function (t) {
           return send({ type: MSG.ADD_TASK, data: {
             id: crypto.randomUUID(), text: t.text, dueDate: t.dueDate, dueTime: t.dueTime,
-            recurring: t.recurring, priority: t.priority, createdAt: Date.now(),
+            recurring: t.recurring, recurDays: t.recurDays || null, priority: t.priority, createdAt: Date.now(),
           }});
         })).then(function (results) {
           var ok = results.filter(function (r) { return r && r.ok; }).length;
@@ -553,7 +616,7 @@ function handleSubmit() {
       } else if (result.action === "delete") {
         handleDeleteAction(result.matches);
       } else if (result.action === "reschedule") {
-        handleRescheduleAction(result.matches, result.dueDate, result.dueTime, result.recurring);
+        handleRescheduleAction(result.matches, result.dueDate, result.dueTime, result.recurring, result.recurDays);
       } else if (result.action === "edit") {
         handleEditAction(result.matches, result.newContent);
       } else if (result.action === "answer_local") {
@@ -623,7 +686,16 @@ function handleEditAction(matches, newContent) {
   }
 }
 
-function handleRescheduleAction(matches, dueDate, dueTime, recurring) {
+// "(Mon, Wed, Fri)", "(daily)", or "" for a one-off task.
+function formatRecurLabel(recurring, recurDays) {
+  if (!recurring) return "";
+  if (Array.isArray(recurDays) && recurDays.length) {
+    return " (" + recurDays.slice().sort().map(function (d) { return WEEKDAY_ABBR[d]; }).join(", ") + ")";
+  }
+  return " (daily)";
+}
+
+function handleRescheduleAction(matches, dueDate, dueTime, recurring, recurDays) {
   if (!matches || !matches.length) {
     showToast("Couldn't find a matching task to reschedule", "error");
     return;
@@ -637,9 +709,9 @@ function handleRescheduleAction(matches, dueDate, dueTime, recurring) {
     "Reschedule this task?\n\n" +
     "“" + (real.content || "").slice(0, 60) + "”\n\n" +
     "From: " + oldWhen + "\n" +
-    "To: " + newWhen + (recurring ? " (daily)" : "")
+    "To: " + newWhen + formatRecurLabel(recurring, recurDays)
   )) {
-    doReschedule(top.id, dueDate, dueTime, recurring);
+    doReschedule(top.id, dueDate, dueTime, recurring, recurDays);
   } else {
     showToast("Cancelled");
   }
@@ -694,8 +766,37 @@ function send(data) {
 function loadClips() {
   send({ type: MSG.GET_ALL_CLIPS }).then(function (r) {
     allClips = (r && r.clips) ? r.clips : [];
-    updateCount(); renderFiltered(); checkStreak();
+    updateCount(); renderCategoryOptions(); updateArchivedPillVisibility(); renderFiltered(); checkStreak();
   }).catch(function (e) { console.error("[Contexto]", e); });
+}
+
+// The Archived pill only shows up once something has actually been
+// archived — an empty pill in a fresh install would just be confusing.
+function updateArchivedPillVisibility() {
+  if (!archivedPill) return;
+  var hasArchived = allClips.some(function (c) { return c.archived; });
+  archivedPill.style.display = (hasArchived || activeFilter === "archived") ? "" : "none";
+}
+
+// Only lists categories that actually have at least one item — a fixed
+// 7-option dropdown before anything is categorized would just be noise.
+function renderCategoryOptions() {
+  if (!categoryFilter) return;
+  var present = {};
+  allClips.forEach(function (c) { if (c.category) present[c.category] = true; });
+  var keys = Object.keys(present);
+  if (!keys.length && activeCategory === "all") {
+    categoryFilter.style.display = "none";
+    return;
+  }
+  categoryFilter.style.display = "";
+  var current = categoryFilter.value || activeCategory;
+  categoryFilter.innerHTML = '<option value="all">All categories</option>' + keys.map(function (k) {
+    var meta = CATEGORIES[k] || { label: k, icon: "" };
+    return '<option value="' + k + '">' + meta.icon + " " + meta.label + '</option>';
+  }).join("");
+  categoryFilter.value = keys.indexOf(current) !== -1 || current === "all" ? current : "all";
+  if (categoryFilter.value !== activeCategory) activeCategory = categoryFilter.value;
 }
 
 function updateCount() {
@@ -715,7 +816,10 @@ function renderFiltered() {
 
 function applyFilter(clips) {
   var start = new Date(); start.setHours(0,0,0,0);
+  if (activeFilter === "archived") return clips.filter(function (c) { return c.archived; });
   var out = clips.filter(function (c) {
+    if (c.archived) return false;
+    if (activeCategory !== "all" && c.category !== activeCategory) return false;
     if (activeFilter === "task")  return c.type === "task";
     if (activeFilter === "note")  return c.type === "note";
     if (activeFilter === "text")  return c.type !== "note" && c.type !== "task" && !isUrl(c.content);
@@ -791,12 +895,27 @@ function formatDue(dueDateStr, dueTimeStr) {
   return dayLabel + (timeLabel ? " at " + timeLabel : "") + (diffDays < 0 ? " (overdue)" : "");
 }
 
+function categoryBadgeHTML(c) {
+  var meta = c.category && CATEGORIES[c.category];
+  if (!meta) return "";
+  return '<span class="badge badge-category">' + meta.icon + " " + esc(meta.label) + '</span>';
+}
+
+function archivedStripHTML(c) {
+  if (!c.archived) return "";
+  return '<div class="archived-strip"><span>📦 Archived' + (c.archivedAt ? " " + relTime(c.archivedAt) : "") + '</span>'
+    + '<button class="ts-btn" data-action="unarchive" data-id="' + esc(c.id) + '">Unarchive</button></div>';
+}
+
 function taskCardHTML(c) {
   var doneToday = c.recurring ? (c.recurringDone === todayStr()) : !!c.done;
   var dueTs = taskDueTimestamp(c);
   var overdue = !c.recurring && dueTs !== null && !doneToday && dueTs < Date.now();
+  var recurLabel = (Array.isArray(c.recurDays) && c.recurDays.length)
+    ? c.recurDays.slice().sort().map(function (d) { return WEEKDAY_ABBR[d]; }).join(",")
+    : "Daily";
   var badge = c.recurring
-    ? '<span class="task-badge task-recurring">↻ Daily' + (c.dueTime ? " at " + esc(formatTime(c.dueTime)) : "") + '</span>'
+    ? '<span class="task-badge task-recurring">↻ ' + esc(recurLabel) + (c.dueTime ? " at " + esc(formatTime(c.dueTime)) : "") + '</span>'
     : (c.dueDate || c.dueTime) ? '<span class="task-badge' + (overdue ? " task-overdue" : "") + '">' + esc(formatDue(c.dueDate, c.dueTime)) + '</span>' : "";
   var priorityBadge = c.priority === "high"
     ? '<span class="task-badge task-priority-high">● High</span>'
@@ -804,11 +923,16 @@ function taskCardHTML(c) {
   var checkSvg = doneToday
     ? '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>'
     : "";
-  return '<div class="clip-card is-task' + (doneToday ? " is-done" : "") + (overdue ? " is-overdue" : "") + (c.priority === "high" ? " is-priority-high" : "") + '" data-content="' + esc(c.content) + '">'
+  var selectBox = selectMode
+    ? '<div class="card-select' + (selectedIds.has(c.id) ? " checked" : "") + '"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></div>'
+    : "";
+  return '<div class="clip-card is-task' + (doneToday ? " is-done" : "") + (overdue ? " is-overdue" : "") + (c.priority === "high" ? " is-priority-high" : "") + (selectMode && selectedIds.has(c.id) ? " is-selected" : "") + '" data-id="' + esc(c.id) + '" data-content="' + esc(c.content) + '">'
+    + selectBox
     + '<div class="task-row">'
     + '<button class="task-check" data-action="toggle" data-id="' + esc(c.id) + '" title="' + (doneToday ? "Mark not done" : "Mark done") + '">' + checkSvg + '</button>'
     + '<div class="task-body"><div class="task-text">' + esc(c.content) + '</div>'
-    + (badge || priorityBadge ? '<div class="task-meta">' + priorityBadge + badge + '</div>' : '')
+    + (badge || priorityBadge || c.category ? '<div class="task-meta">' + priorityBadge + badge + categoryBadgeHTML(c) + '</div>' : '')
+    + archivedStripHTML(c)
     + '</div>'
     + '<button class="act-btn danger" data-action="delete" data-id="' + esc(c.id) + '" data-content=""><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/></svg></button>'
     + '</div></div>';
@@ -842,11 +966,17 @@ function cardHTML(c, q) {
       + '<button class="ts-dismiss" data-action="dismiss-suggest" data-id="'+esc(c.id)+'" title="Dismiss">&#10005;</button>'
       + '</div></div>'
     : "";
-  return '<div class="clip-card'+(isNote?" is-note":"")+'" data-content="'+esc(c.content)+'">'
+  var selectBox = selectMode
+    ? '<div class="card-select' + (selectedIds.has(c.id) ? " checked" : "") + '"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></div>'
+    : "";
+  return '<div class="clip-card'+(isNote?" is-note":"")+(selectMode && selectedIds.has(c.id) ? " is-selected" : "")+'" data-id="'+esc(c.id)+'" data-content="'+esc(c.content)+'">'
+    + selectBox
     +'<div class="card-meta">'+fav+'<span class="domain">'+domain+'</span><span class="ts">'+relTime(c.createdAt)+'</span></div>'
     +'<div class="card-body'+(link?" is-link":"")+'">'+(maskedBody || hl(preview,q))+'</div>'
     + suggestStrip
+    + archivedStripHTML(c)
     +'<div class="card-foot"><span class="badge '+bc+'">'+bl+'</span>'
+    + categoryBadgeHTML(c)
     +'<div class="card-actions">'+openBtn+copyBtn+delBtn+'</div></div></div>';
 }
 
@@ -860,33 +990,49 @@ function taskSummaryHTML() {
   var today = todayStr();
   var done = 0, overdue = 0, upcoming = 0;
   tasks.forEach(function (c) {
+    if (c.recurring && !taskAppliesToday(c)) return; // not scheduled today — irrelevant to today's summary
     var doneToday = c.recurring ? (c.recurringDone === today) : !!c.done;
     if (doneToday) { done++; return; }
     var dueTs = taskDueTimestamp(c);
     if (!c.recurring && dueTs !== null && dueTs < Date.now()) overdue++;
     else upcoming++;
   });
+  var rescheduleBtn = overdue > 0
+    ? '<button class="ts-reschedule-all" data-action="reschedule-overdue">Reschedule to today</button>'
+    : "";
   return '<div class="task-summary">'
     + '<span class="ts-item ts-done">' + done + ' done</span>'
     + '<span class="ts-sep">·</span>'
     + '<span class="ts-item ts-overdue">' + overdue + ' overdue</span>'
     + '<span class="ts-sep">·</span>'
     + '<span class="ts-item ts-upcoming">' + upcoming + ' upcoming</span>'
+    + rescheduleBtn
     + '</div>';
 }
 
 function render(clips, q) {
+  lastRenderedClips = clips;
   var summary = activeFilter === "task" ? taskSummaryHTML() : "";
-  if (!clips.length) { clipsList.innerHTML = summary; emptyState.style.display = summary ? "none" : "flex"; return; }
+  if (!clips.length) { clipsList.innerHTML = summary; emptyState.style.display = summary ? "none" : "flex"; updateBulkBar(); return; }
   emptyState.style.display="none";
   clipsList.innerHTML=summary + clips.map(function(c){return cardHTML(c,q);}).join("");
   bindCardActions();
+  updateBulkBar();
 }
 
 function bindCardActions() {
   clipsList.querySelectorAll("img.fav").forEach(function(img){
     img.addEventListener("error", function(){ img.style.display = "none"; });
   });
+  if (selectMode) {
+    clipsList.querySelectorAll(".clip-card").forEach(function (el) {
+      el.addEventListener("click", function (e) {
+        e.stopPropagation();
+        toggleSelect(el.dataset.id);
+      });
+    });
+    return;
+  }
   clipsList.querySelectorAll("[data-action]").forEach(function(btn){
     btn.addEventListener("click",function(e){
       e.stopPropagation();
@@ -897,6 +1043,8 @@ function bindCardActions() {
       if(action==="toggle") doToggleTask(id);
       if(action==="suggest-task")   doSuggestTask(id,content);
       if(action==="dismiss-suggest") doDismissSuggest(id);
+      if(action==="reschedule-overdue") doRescheduleOverdue();
+      if(action==="unarchive") doUnarchive(id);
     });
   });
   clipsList.querySelectorAll(".clip-card").forEach(function(el){
@@ -922,6 +1070,13 @@ function doDismissSuggest(id) {
   renderFiltered();
 }
 
+function doUnarchive(id) {
+  send({ type: MSG.SET_ARCHIVED, data: { id: id, archived: false } }).then(function (r) {
+    if (r && r.ok) { showToast("Unarchived", "success"); loadClips(); }
+    else showToast("Couldn't unarchive", "error");
+  }).catch(function () { showToast("Couldn't unarchive", "error"); });
+}
+
 function doCopy(text,btn) {
   navigator.clipboard.writeText(text).then(function(){
     showToast("Copied!","success");
@@ -943,6 +1098,27 @@ function doToggleTask(id) {
   }).catch(function(){showToast("Couldn't update task","error");});
 }
 
+// Bulk-friendly version of a single reschedule — pushes every currently
+// overdue (non-recurring) task's date to today in one confirm, for when
+// things have piled up instead of clicking through them one by one.
+function doRescheduleOverdue() {
+  var today = todayStr();
+  var now = Date.now();
+  var overdueTasks = allClips.filter(function (c) {
+    if (c.type !== "task" || c.recurring || c.done) return false;
+    var dueTs = taskDueTimestamp(c);
+    return dueTs !== null && dueTs < now;
+  });
+  if (!overdueTasks.length) { showToast("No overdue tasks"); return; }
+  if (!confirm("Reschedule " + overdueTasks.length + " overdue task(s) to today?")) return;
+  Promise.all(overdueTasks.map(function (c) {
+    return send({ type: MSG.RESCHEDULE_TASK, data: { id: c.id, dueDate: today, dueTime: c.dueTime, recurring: false, recurDays: null } });
+  })).then(function () {
+    showToast(overdueTasks.length + " task(s) rescheduled to today", "success");
+    loadClips();
+  });
+}
+
 // Both paths upsert by id (IndexedDB .put() on the "id" keyPath), so the
 // existing record is overwritten in place rather than duplicated. Notes go
 // through ADD_NOTE to keep them verbatim (no sensitive-data stripping) —
@@ -961,8 +1137,8 @@ function doEdit(id, newContent) {
   }).catch(function () { showToast("Update failed", "error"); });
 }
 
-function doReschedule(id, dueDate, dueTime, recurring) {
-  send({type: MSG.RESCHEDULE_TASK, data: {id: id, dueDate: dueDate, dueTime: dueTime, recurring: recurring}}).then(function (r) {
+function doReschedule(id, dueDate, dueTime, recurring, recurDays) {
+  send({type: MSG.RESCHEDULE_TASK, data: {id: id, dueDate: dueDate, dueTime: dueTime, recurring: recurring, recurDays: recurDays}}).then(function (r) {
     if (r && r.ok) { showToast("Rescheduled!", "success"); loadClips(); }
     else showToast("Reschedule failed", "error");
   }).catch(function () { showToast("Reschedule failed", "error"); });
@@ -1050,4 +1226,68 @@ function runSelectedPaletteAction() {
   var action = cmdkFiltered[cmdkSelected];
   closePalette();
   if (action) action.run();
+}
+
+// ── Bulk select ───────────────────────────────────────────────────────────────
+function initSelectMode() {
+  selectModeBtn.addEventListener("click", function () {
+    selectMode = !selectMode;
+    if (!selectMode) selectedIds.clear();
+    selectModeBtn.classList.toggle("active", selectMode);
+    renderFiltered();
+  });
+  bulkCancel.addEventListener("click", function () {
+    selectMode = false;
+    selectedIds.clear();
+    selectModeBtn.classList.remove("active");
+    renderFiltered();
+  });
+  bulkSelectAll.addEventListener("click", function () {
+    var allSelected = lastRenderedClips.length > 0 && lastRenderedClips.every(function (c) { return selectedIds.has(c.id); });
+    if (allSelected) selectedIds.clear();
+    else lastRenderedClips.forEach(function (c) { selectedIds.add(c.id); });
+    renderFiltered();
+  });
+  bulkDelete.addEventListener("click", function () {
+    if (!selectedIds.size) { showToast("Nothing selected"); return; }
+    var ids = Array.from(selectedIds);
+    if (!confirm("Delete " + ids.length + " item(s)? This cannot be undone.")) return;
+    Promise.all(ids.map(function (id) { return send({ type: MSG.DELETE_CLIP, data: { id: id } }); })).then(function () {
+      selectedIds.clear();
+      showToast(ids.length + " item(s) deleted", "success");
+      loadClips();
+    });
+  });
+  bulkExport.addEventListener("click", function () {
+    if (!selectedIds.size) { showToast("Nothing selected"); return; }
+    send({ type: MSG.EXPORT_DATA }).then(function (r) {
+      if (!r || !r.ok) { showToast("Export failed", "error"); return; }
+      var items = r.items.filter(function (it) { return selectedIds.has(it.id); });
+      downloadBackup(items);
+      showToast(items.length + " item(s) exported", "success");
+    }).catch(function () { showToast("Export failed", "error"); });
+  });
+  bulkAddTasks.addEventListener("click", function () {
+    var targets = lastRenderedClips.filter(function (c) { return selectedIds.has(c.id) && c.type !== "task" && c.type !== "note"; });
+    if (!targets.length) { showToast("Select some clips (not notes/tasks) first", "error"); return; }
+    Promise.all(targets.map(function (c) {
+      return send({ type: MSG.ADD_TASK, data: { id: crypto.randomUUID(), text: c.content, createdAt: Date.now() } })
+        .then(function () { return send({ type: MSG.DELETE_CLIP, data: { id: c.id } }); });
+    })).then(function () {
+      selectedIds.clear();
+      showToast(targets.length + " item(s) added as tasks", "success");
+      loadClips();
+    });
+  });
+}
+function toggleSelect(id) {
+  if (!id) return;
+  if (selectedIds.has(id)) selectedIds.delete(id); else selectedIds.add(id);
+  renderFiltered();
+}
+function updateBulkBar() {
+  if (!bulkBar) return;
+  bulkBar.style.display = selectMode ? "flex" : "none";
+  bulkCount.textContent = selectedIds.size + " selected";
+  clipsList.classList.toggle("select-mode", selectMode);
 }

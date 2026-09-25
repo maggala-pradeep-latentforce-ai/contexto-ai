@@ -8,23 +8,47 @@ import { openDB, saveClip, getAllClips, deleteClip, clearAllClips } from "./db.j
 import { embed, cosineSim } from "./embed-engine.js";
 import { stripSensitive, isSensitive, isSensitiveKey, encryptText, decryptText } from "./security.js";
 
-var allClips = [], activeFilter = "all", searchQuery = "", searchTimer;
-var searchInput, clearSearch, clipsList, emptyState, clipCount;
+var allClips = [], activeFilter = "all", activeCategory = "all", searchQuery = "", searchTimer;
+// Kept in sync with src/offscreen/index.js's CATEGORIES — only used here for
+// display labels/icons, the actual categorization happens at save time.
+var CATEGORIES = {
+  shopping: { label: "Shopping", icon: "🛒" },
+  travel:   { label: "Travel",   icon: "✈️" },
+  finance:  { label: "Finance",  icon: "💰" },
+  work:     { label: "Work",     icon: "💼" },
+  health:   { label: "Health",   icon: "🩺" },
+  learning: { label: "Learning", icon: "📚" },
+  personal: { label: "Personal", icon: "🏠" },
+};
+var selectMode = false, selectedIds = new Set(), lastRenderedClips = [];
+var searchInput, clearSearch, clipsList, emptyState, clipCount, categoryFilter, archivedPill;
 var clearBtn, settingsBtn, backBtn, saveSettingsBtn, hideBtn;
 var noteInput, saveNoteBtn, composerHint, aiStatus, aiStatusText;
 var apiKeyInput, proxyInput, modelSelect, toggleApiKey, settingsStatus;
 var mainView, settingsView;
 var themeBtn, themeIconMoon, themeIconSun;
-var quickTaskBtn, quickTaskForm, qtText, qtDate, qtTime, qtPriority, qtRecurring, qtCancel, qtSave;
+var quickTaskBtn, quickTaskForm, qtText, qtDate, qtTime, qtPriority, qtRecurring, qtDays, qtCancel, qtSave;
+var qtSelectedDays = [];
 var exportBtn, importBtn, importFile;
 var streakBadge, onboardTip, onboardTipText, onboardSkip, onboardNext;
 var cmdkBtn, cmdkOverlay, cmdkInput, cmdkList;
+var selectModeBtn, bulkBar, bulkCount, bulkSelectAll, bulkAddTasks, bulkExport, bulkDelete, bulkCancel;
 var hasApiKey = false;
 var lastClipText = "", lastClipTs = 0;
 
 function todayStr() {
   var d = new Date();
   return d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0") + "-" + String(d.getDate()).padStart(2,"0");
+}
+
+var WEEKDAY_ABBR = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+// A recurring task with recurDays set only actually applies on those
+// weekdays (0=Sunday..6=Saturday) — no recurDays (or empty) means every day,
+// same as the original all-days-recurring behavior.
+function taskAppliesToday(c) {
+  if (!c.recurring) return true;
+  if (!Array.isArray(c.recurDays) || !c.recurDays.length) return true;
+  return c.recurDays.indexOf(new Date().getDay()) !== -1;
 }
 
 // ── Proactive suggestions ────────────────────────────────────────────────────
@@ -54,6 +78,8 @@ document.addEventListener("DOMContentLoaded", function () {
   clipsList     = document.getElementById("clipsList");
   emptyState    = document.getElementById("emptyState");
   clipCount     = document.getElementById("clipCount");
+  categoryFilter = document.getElementById("categoryFilter");
+  archivedPill  = document.getElementById("archivedPill");
   clearBtn      = document.getElementById("clearBtn");
   settingsBtn   = document.getElementById("settingsBtn");
   backBtn       = document.getElementById("backBtn");
@@ -79,6 +105,7 @@ document.addEventListener("DOMContentLoaded", function () {
   qtTime        = document.getElementById("qtTime");
   qtPriority    = document.getElementById("qtPriority");
   qtRecurring   = document.getElementById("qtRecurring");
+  qtDays        = document.getElementById("qtDays");
   qtCancel      = document.getElementById("qtCancel");
   qtSave        = document.getElementById("qtSave");
   exportBtn     = document.getElementById("exportBtn");
@@ -93,6 +120,14 @@ document.addEventListener("DOMContentLoaded", function () {
   cmdkOverlay   = document.getElementById("cmdkOverlay");
   cmdkInput     = document.getElementById("cmdkInput");
   cmdkList      = document.getElementById("cmdkList");
+  selectModeBtn = document.getElementById("selectModeBtn");
+  bulkBar       = document.getElementById("bulkBar");
+  bulkCount     = document.getElementById("bulkCount");
+  bulkSelectAll = document.getElementById("bulkSelectAll");
+  bulkAddTasks  = document.getElementById("bulkAddTasks");
+  bulkExport    = document.getElementById("bulkExport");
+  bulkDelete    = document.getElementById("bulkDelete");
+  bulkCancel    = document.getElementById("bulkCancel");
 
   var logoImg = document.getElementById("logoImg");
   if (logoImg) logoImg.addEventListener("error", function () { logoImg.style.display = "none"; });
@@ -101,6 +136,7 @@ document.addEventListener("DOMContentLoaded", function () {
   initDataActions();
   initOnboarding();
   initCommandPalette();
+  initSelectMode();
   init();
 });
 
@@ -156,7 +192,7 @@ function checkStreak() {
   renderStreakBadge(streak);
   if (last === today) return;
 
-  var relevant = allClips.filter(function (c) { return c.type === "task" && (c.recurring || c.dueDate === today); });
+  var relevant = allClips.filter(function (c) { return c.type === "task" && ((c.recurring && taskAppliesToday(c)) || c.dueDate === today); });
   if (!relevant.length) return;
   var allDone = relevant.every(function (c) { return c.recurring ? c.recurringDone === today : !!c.done; });
   if (!allDone) return;
@@ -216,23 +252,28 @@ function playCelebrationChime() {
 }
 
 // ── Backup export/import ─────────────────────────────────────────────────────
+function clipToExportItem(c) {
+  return {
+    id: c.id, type: c.type, content: c.content, url: c.url || "", title: c.title || "",
+    favicon: c.favicon || "", domain: c.domain || "", createdAt: c.createdAt,
+    dueDate: c.dueDate || null, dueTime: c.dueTime || null, recurring: !!c.recurring, recurDays: c.recurDays || null,
+    priority: c.priority || null, done: !!c.done, recurringDone: c.recurringDone || null, category: c.category || null,
+    completedAt: c.completedAt || null, archived: !!c.archived, archivedAt: c.archivedAt || null,
+  };
+}
+function downloadBackup(items) {
+  var blob = new Blob([JSON.stringify({ app: "contexto-ai", exportedAt: Date.now(), items: items }, null, 2)], { type: "application/json" });
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement("a");
+  a.href = url;
+  a.download = "contexto-backup-" + todayStr() + ".json";
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
 function initDataActions() {
   exportBtn.addEventListener("click", function () {
-    var items = allClips.map(function (c) {
-      return {
-        id: c.id, type: c.type, content: c.content, url: c.url || "", title: c.title || "",
-        favicon: c.favicon || "", domain: c.domain || "", createdAt: c.createdAt,
-        dueDate: c.dueDate || null, dueTime: c.dueTime || null, recurring: !!c.recurring,
-        priority: c.priority || null, done: !!c.done, recurringDone: c.recurringDone || null,
-      };
-    });
-    var blob = new Blob([JSON.stringify({ app: "contexto-ai", exportedAt: Date.now(), items: items }, null, 2)], { type: "application/json" });
-    var url = URL.createObjectURL(blob);
-    var a = document.createElement("a");
-    a.href = url;
-    a.download = "contexto-backup-" + todayStr() + ".json";
-    document.body.appendChild(a); a.click(); document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    var items = allClips.map(clipToExportItem);
+    downloadBackup(items);
     showToast(items.length + " item(s) exported", "success");
   });
   importBtn.addEventListener("click", function () { importFile.click(); });
@@ -269,8 +310,11 @@ function importItems(items) {
           id: item.id || cryptoRandomId(), type: "task", content: item.content,
           url: "", title: "Task", favicon: "", domain: "task",
           createdAt: item.createdAt || Date.now(), vector: embed(item.content), key: null,
+          category: categorize(item.content, null),
           dueDate: item.dueDate || null, dueTime: item.dueTime || null, recurring: !!item.recurring,
+          recurDays: (Array.isArray(item.recurDays) && item.recurDays.length) ? item.recurDays : null,
           priority: item.priority || null, done: !!item.done, recurringDone: item.recurringDone || null,
+          completedAt: item.completedAt || null, archived: !!item.archived, archivedAt: item.archivedAt || null,
           notifiedAt: null,
         }).then(function () { count++; });
       }
@@ -281,6 +325,8 @@ function importItems(items) {
             id: item.id || cryptoRandomId(), type: "note", content: r.content,
             url: "", title: "Manual Note", favicon: "", domain: "note",
             createdAt: item.createdAt || Date.now(), vector: embed(item.content), key: key1, sensitive: r.sensitive,
+            category: categorize(item.content, null),
+            archived: !!item.archived, archivedAt: item.archivedAt || null,
           });
         }).then(function () { count++; });
       }
@@ -292,6 +338,8 @@ function importItems(items) {
           url: item.url || "", title: item.title || "", favicon: item.favicon || "",
           domain: item.domain || "", createdAt: item.createdAt || Date.now(),
           vector: embed(clean), key: key2, sensitive: r.sensitive,
+          category: categorize(clean, item.domain),
+          archived: !!item.archived, archivedAt: item.archivedAt || null,
         });
       }).then(function () { count++; });
     }).catch(function () { /* skip malformed entries, keep importing the rest */ });
@@ -323,6 +371,8 @@ function init() {
   loadConfig();
   loadClips();
   setInterval(checkDueNotifications, 30000);
+  setInterval(runAutoArchive, 30 * 60 * 1000);
+  setTimeout(runAutoArchive, 5000);
   setTimeout(fireTestNotification, 4000);
 
   noteInput.addEventListener("input", function () {
@@ -353,6 +403,10 @@ function init() {
       p.classList.add("active"); activeFilter = p.dataset.filter; renderFiltered();
     });
   });
+  categoryFilter.addEventListener("change", function () {
+    activeCategory = categoryFilter.value;
+    renderFiltered();
+  });
 
   clearBtn.addEventListener("click", confirmClearAll);
   settingsBtn.addEventListener("click", showSettings);
@@ -369,7 +423,24 @@ function init() {
   quickTaskBtn.addEventListener("click", function () {
     var opening = quickTaskForm.style.display === "none";
     quickTaskForm.style.display = opening ? "block" : "none";
-    if (opening) { qtText.value = ""; qtDate.value = ""; qtTime.value = ""; qtPriority.value = ""; qtRecurring.checked = false; qtText.focus(); }
+    if (opening) {
+      qtText.value = ""; qtDate.value = ""; qtTime.value = ""; qtPriority.value = ""; qtRecurring.checked = false;
+      qtSelectedDays = [];
+      qtDays.style.display = "none";
+      qtDays.querySelectorAll(".qt-day").forEach(function (b) { b.classList.remove("active"); });
+      qtText.focus();
+    }
+  });
+  qtRecurring.addEventListener("change", function () {
+    qtDays.style.display = qtRecurring.checked ? "flex" : "none";
+  });
+  qtDays.querySelectorAll(".qt-day").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      var d = parseInt(btn.dataset.day, 10);
+      var i = qtSelectedDays.indexOf(d);
+      if (i === -1) qtSelectedDays.push(d); else qtSelectedDays.splice(i, 1);
+      btn.classList.toggle("active", i === -1);
+    });
   });
   qtCancel.addEventListener("click", function () { quickTaskForm.style.display = "none"; });
   qtSave.addEventListener("click", function () {
@@ -379,7 +450,9 @@ function init() {
       id: cryptoRandomId(), type: "task", content: text,
       url: "", title: "Task", favicon: "", domain: "task",
       createdAt: Date.now(), vector: embed(text), key: null,
+      category: categorize(text, null),
       dueDate: qtDate.value || null, dueTime: qtTime.value || null, recurring: qtRecurring.checked,
+      recurDays: (qtRecurring.checked && qtSelectedDays.length) ? qtSelectedDays.slice() : null,
       priority: qtPriority.value || null,
       done: false, recurringDone: null, notifiedAt: null,
     }).then(function () { showToast("Task added!", "success"); quickTaskForm.style.display = "none"; loadClips(); })
@@ -412,6 +485,27 @@ async function maybeEncrypt(content, key) {
   return { content: await encryptText(content), sensitive: true };
 }
 
+// Re-saving a note whose content already exists verbatim (non-sensitive)
+// bumps the existing card to the top instead of piling up a duplicate.
+function saveNoteWithDedup(content, createdAt) {
+  var key = extractKey(content);
+  var category = categorize(content, null);
+  return maybeEncrypt(content, key).then(function (r) {
+    if (!r.sensitive) {
+      var dup = allClips.find(function (c) { return !c.sensitive && c.type === "note" && c.content === content; });
+      if (dup) {
+        dup.createdAt = createdAt || Date.now(); dup.category = category; dup.archived = false; dup.archivedAt = null;
+        return saveClip(dup);
+      }
+    }
+    return saveClip({
+      id: cryptoRandomId(), type: "note", content: r.content,
+      url: "", title: "Manual Note", favicon: "", domain: "note",
+      createdAt: createdAt || Date.now(), vector: embed(content), key: key, sensitive: r.sensitive, category: category,
+    });
+  });
+}
+
 // ── Clipboard capture (no browser DOM/favicon context available here) ───────
 function handleClipboardCapture(text, createdAt) {
   if (!text || text.length < 2) return;
@@ -421,11 +515,21 @@ function handleClipboardCapture(text, createdAt) {
 
   var clean = stripSensitive(text);
   var key = extractKey(clean);
+  var category = categorize(clean, "Clipboard");
   maybeEncrypt(clean, key).then(function (r) {
+    // Re-copying something already stored (verbatim, non-sensitive) just
+    // bumps the existing card to the top instead of piling up a duplicate.
+    if (!r.sensitive) {
+      var dup = allClips.find(function (c) { return !c.sensitive && c.type === "text" && c.content === clean; });
+      if (dup) {
+        dup.createdAt = now; dup.category = category; dup.archived = false; dup.archivedAt = null;
+        return saveClip(dup);
+      }
+    }
     return saveClip({
       id: cryptoRandomId(), type: "text", content: r.content,
       url: "", title: "", favicon: "", domain: "Clipboard",
-      createdAt: now, vector: embed(clean), key: key, sensitive: r.sensitive,
+      createdAt: now, vector: embed(clean), key: key, sensitive: r.sensitive, category: category,
     });
   }).then(function () { loadClips(); }).catch(function (e) { console.error("[Contexto]", e); });
 }
@@ -440,6 +544,32 @@ function extractKey(text) {
   var m = /^([a-zA-Z0-9 _/-]{2,40}):\s+(\S.*)$/s.exec(String(text || "").trim());
   return m ? m[1].trim().toLowerCase() : null;
 }
+// ── Auto-categorization ──────────────────────────────────────────────────────
+// Pure local keyword/domain heuristics — see src/offscreen/index.js for the
+// extension's identical implementation (keep both in sync if you change one).
+var CATEGORY_DOMAIN_RULES = [
+  [/amazon\.|ebay\.|etsy\.|walmart\.|target\.com|aliexpress|shopify|shop\./i, "shopping"],
+  [/booking\.com|airbnb|expedia|kayak\.com|delta\.com|united\.com|southwest\.com|airlines|makemytrip|skyscanner/i, "travel"],
+  [/paypal\.|chase\.com|bankofamerica|wellsfargo|stripe\.com|venmo|revolut|coinbase/i, "finance"],
+  [/github\.|gitlab\.|jira\.|atlassian|slack\.com|notion\.so|linkedin\.com|zoom\.us/i, "work"],
+];
+var CATEGORY_KEYWORD_RULES = [
+  [/\b(order|cart|checkout|price|discount|coupon|shipping|purchase|buy)\b/i, "shopping"],
+  [/\b(flight|hotel|booking|itinerary|passport|reservation|boarding|trip|vacation)\b/i, "travel"],
+  [/\b(invoice|payment|bank account|routing number|tax|salary|budget|expense|paid \$|\$\d)/i, "finance"],
+  [/\b(meeting|deadline|project|client|standup|sprint|colleague|manager|office|report due)\b/i, "work"],
+  [/\b(doctor|appointment|prescription|medicine|pharmacy|dentist|clinic|hospital|workout|gym)\b/i, "health"],
+  [/\b(course|tutorial|lecture|homework|assignment|read this article|study for)\b/i, "learning"],
+  [/\b(mom|dad|birthday|anniversary|call (him|her|them)|family dinner)\b/i, "personal"],
+];
+function categorize(content, domain) {
+  var text = String(content || "");
+  var d = String(domain || "");
+  for (var i = 0; i < CATEGORY_DOMAIN_RULES.length; i++) if (CATEGORY_DOMAIN_RULES[i][0].test(d)) return CATEGORY_DOMAIN_RULES[i][1];
+  for (var j = 0; j < CATEGORY_KEYWORD_RULES.length; j++) if (CATEGORY_KEYWORD_RULES[j][0].test(text)) return CATEGORY_KEYWORD_RULES[j][1];
+  return null;
+}
+
 function keyOverlap(query, key) {
   if (!key) return 0;
   var qWords = query.toLowerCase().replace(/[^a-z0-9 ]/g, " ").split(/\s+/).filter(function (w) { return w.length > 2; });
@@ -566,14 +696,7 @@ function handleLocalSubmit(text) {
     renderFiltered();
     showToast("Searching locally — add an API key in Settings for AI answers", "success");
   } else {
-    var key = extractKey(text);
-    maybeEncrypt(text, key).then(function (r) {
-      return saveClip({
-        id: cryptoRandomId(), type: "note", content: r.content,
-        url: "", title: "Manual Note", favicon: "", domain: "note",
-        createdAt: Date.now(), vector: embed(text), key: key, sensitive: r.sensitive,
-      });
-    }).then(function () { showToast("Saved!", "success"); loadClips(); })
+    saveNoteWithDedup(text).then(function () { showToast("Saved!", "success"); loadClips(); })
       .catch(function () { showToast("Save failed", "error"); });
   }
 }
@@ -619,15 +742,7 @@ function handleSubmit() {
     composerHint.textContent = ""; composerHint.className = "composer-hint";
 
     if (result.action === "save") {
-      var content = result.content;
-      var key = extractKey(content);
-      maybeEncrypt(content, key).then(function (r2) {
-        return saveClip({
-          id: cryptoRandomId(), type: "note", content: r2.content,
-          url: "", title: "Manual Note", favicon: "", domain: "note",
-          createdAt: Date.now(), vector: embed(content), key: key, sensitive: r2.sensitive,
-        });
-      }).then(function () { showToast("Saved!", "success"); loadClips(); })
+      saveNoteWithDedup(result.content).then(function () { showToast("Saved!", "success"); loadClips(); })
         .catch(function () { showToast("Save failed", "error"); });
     } else if (result.action === "task") {
       // One message can describe several tasks — add them all, one save
@@ -638,7 +753,9 @@ function handleSubmit() {
           id: cryptoRandomId(), type: "task", content: t.text,
           url: "", title: "Task", favicon: "", domain: "task",
           createdAt: Date.now(), vector: embed(t.text), key: null,
+          category: categorize(t.text, null),
           dueDate: t.dueDate || null, dueTime: t.dueTime || null, recurring: !!t.recurring,
+          recurDays: t.recurDays || null,
           priority: t.priority || null,
           done: false, recurringDone: null, notifiedAt: null,
         });
@@ -649,7 +766,7 @@ function handleSubmit() {
     } else if (result.action === "delete") {
       handleDeleteAction(result.matches);
     } else if (result.action === "reschedule") {
-      handleRescheduleAction(result.matches, result.dueDate, result.dueTime, result.recurring);
+      handleRescheduleAction(result.matches, result.dueDate, result.dueTime, result.recurring, result.recurDays);
     } else if (result.action === "edit") {
       handleEditAction(result.matches, result.newContent);
     } else if (result.action === "answer_local") {
@@ -717,7 +834,16 @@ function handleEditAction(matches, newContent) {
   }
 }
 
-function handleRescheduleAction(matches, dueDate, dueTime, recurring) {
+// "(Mon, Wed, Fri)", "(daily)", or "" for a one-off task.
+function formatRecurLabel(recurring, recurDays) {
+  if (!recurring) return "";
+  if (Array.isArray(recurDays) && recurDays.length) {
+    return " (" + recurDays.slice().sort().map(function (d) { return WEEKDAY_ABBR[d]; }).join(", ") + ")";
+  }
+  return " (daily)";
+}
+
+function handleRescheduleAction(matches, dueDate, dueTime, recurring, recurDays) {
   if (!matches || !matches.length) {
     showToast("Couldn't find a matching task to reschedule", "error");
     return;
@@ -731,9 +857,9 @@ function handleRescheduleAction(matches, dueDate, dueTime, recurring) {
     "Reschedule this task?\n\n" +
     "“" + (real.content || "").slice(0, 60) + "”\n\n" +
     "From: " + oldWhen + "\n" +
-    "To: " + newWhen + (recurring ? " (daily)" : "")
+    "To: " + newWhen + formatRecurLabel(recurring, recurDays)
   )) {
-    doReschedule(top.id, dueDate, dueTime, recurring);
+    doReschedule(top.id, dueDate, dueTime, recurring, recurDays);
   } else {
     showToast("Cancelled");
   }
@@ -792,8 +918,37 @@ function decryptClipsForDisplay(clips) {
 function loadClips() {
   getAllClips().then(decryptClipsForDisplay).then(function (clips) {
     allClips = clips || [];
-    updateCount(); renderFiltered(); updateDueBadge(); checkStreak();
+    updateCount(); renderCategoryOptions(); updateArchivedPillVisibility(); renderFiltered(); updateDueBadge(); checkStreak();
   }).catch(function (e) { console.error("[Contexto]", e); });
+}
+
+// The Archived pill only shows up once something has actually been
+// archived — an empty pill in a fresh install would just be confusing.
+function updateArchivedPillVisibility() {
+  if (!archivedPill) return;
+  var hasArchived = allClips.some(function (c) { return c.archived; });
+  archivedPill.style.display = (hasArchived || activeFilter === "archived") ? "" : "none";
+}
+
+// Only lists categories that actually have at least one item — a fixed
+// 7-option dropdown before anything is categorized would just be noise.
+function renderCategoryOptions() {
+  if (!categoryFilter) return;
+  var present = {};
+  allClips.forEach(function (c) { if (c.category) present[c.category] = true; });
+  var keys = Object.keys(present);
+  if (!keys.length && activeCategory === "all") {
+    categoryFilter.style.display = "none";
+    return;
+  }
+  categoryFilter.style.display = "";
+  var current = categoryFilter.value || activeCategory;
+  categoryFilter.innerHTML = '<option value="all">All categories</option>' + keys.map(function (k) {
+    var meta = CATEGORIES[k] || { label: k, icon: "" };
+    return '<option value="' + k + '">' + meta.icon + " " + meta.label + '</option>';
+  }).join("");
+  categoryFilter.value = keys.indexOf(current) !== -1 || current === "all" ? current : "all";
+  if (categoryFilter.value !== activeCategory) activeCategory = categoryFilter.value;
 }
 
 function updateCount() {
@@ -821,7 +976,10 @@ function renderFiltered() {
 
 function applyFilter(clips) {
   var start = new Date(); start.setHours(0,0,0,0);
+  if (activeFilter === "archived") return clips.filter(function (c) { return c.archived; });
   var out = clips.filter(function (c) {
+    if (c.archived) return false;
+    if (activeCategory !== "all" && c.category !== activeCategory) return false;
     if (activeFilter === "task")  return c.type === "task";
     if (activeFilter === "note")  return c.type === "note";
     if (activeFilter === "text")  return c.type !== "note" && c.type !== "task" && !isUrl(c.content);
@@ -903,6 +1061,7 @@ function updateDueBadge() {
   var today = todayStr();
   var count = allClips.filter(function (c) {
     if (c.type !== "task") return false;
+    if (c.recurring && !taskAppliesToday(c)) return false;
     var doneToday = c.recurring ? (c.recurringDone === today) : !!c.done;
     if (doneToday) return false;
     var dueTs = taskDueTimestamp(c);
@@ -922,13 +1081,17 @@ function updateTrayTasks() {
   var now = Date.now();
   var items = allClips.filter(function (c) {
     if (c.type !== "task") return false;
+    if (c.recurring && !taskAppliesToday(c)) return false;
     var doneToday = c.recurring ? (c.recurringDone === today) : !!c.done;
     if (doneToday) return false;
     return c.recurring || c.dueDate === today || (c.dueDate && c.dueDate < today);
   }).sort(taskComparator).slice(0, 5).map(function (c) {
     var dueTs = taskDueTimestamp(c);
     var overdue = !c.recurring && dueTs !== null && dueTs < now;
-    var when = c.recurring ? ("Daily" + (c.dueTime ? " " + formatTime(c.dueTime) : "")) : formatDue(c.dueDate, c.dueTime);
+    var recurLabel = (Array.isArray(c.recurDays) && c.recurDays.length)
+      ? c.recurDays.slice().sort().map(function (d) { return WEEKDAY_ABBR[d]; }).join(",")
+      : "Daily";
+    var when = c.recurring ? (recurLabel + (c.dueTime ? " " + formatTime(c.dueTime) : "")) : formatDue(c.dueDate, c.dueTime);
     return { label: c.content.slice(0, 40) + (when ? " — " + when : ""), overdue: overdue };
   });
   window.contexto.setTrayTasks(items);
@@ -940,6 +1103,7 @@ function checkDueNotifications() {
   var changed = false;
   allClips.forEach(function (c) {
     if (c.type !== "task") return;
+    if (c.recurring && !taskAppliesToday(c)) return;
     var doneToday = c.recurring ? (c.recurringDone === today) : !!c.done;
     if (doneToday) return;
     var notifyTs = taskNotifyTimestamp(c);
@@ -963,6 +1127,29 @@ function checkDueNotifications() {
   });
   if (changed) renderFiltered();
   updateDueBadge();
+}
+
+// Clutter control: auto-captured clips nobody acted on eventually stop
+// being useful, and a completed one-off task has done its job — both
+// quietly move to "Archived" (filterable, reversible, never deleted
+// outright) instead of piling up in the main feed forever.
+var ARCHIVE_CLIP_MS = 21 * 24 * 60 * 60 * 1000; // 21 days
+var ARCHIVE_TASK_DONE_MS = 7 * 24 * 60 * 60 * 1000; // 7 days after completion
+function runAutoArchive() {
+  var now = Date.now();
+  var changed = false;
+  allClips.forEach(function (c) {
+    if (c.archived) return;
+    var shouldArchive = false;
+    if (c.type === "text" && (now - c.createdAt) > ARCHIVE_CLIP_MS) shouldArchive = true;
+    if (c.type === "task" && !c.recurring && c.done && c.completedAt && (now - c.completedAt) > ARCHIVE_TASK_DONE_MS) shouldArchive = true;
+    if (!shouldArchive) return;
+    c.archived = true;
+    c.archivedAt = now;
+    changed = true;
+    saveClip(c).catch(function () {});
+  });
+  if (changed) { renderFiltered(); updateArchivedPillVisibility(); }
 }
 
 // Unchecked tasks first, then by due date+time (soonest/overdue first,
@@ -1021,12 +1208,27 @@ function formatDue(dueDateStr, dueTimeStr) {
   return dayLabel + (timeLabel ? " at " + timeLabel : "") + (diffDays < 0 ? " (overdue)" : "");
 }
 
+function categoryBadgeHTML(c) {
+  var meta = c.category && CATEGORIES[c.category];
+  if (!meta) return "";
+  return '<span class="badge badge-category">' + meta.icon + " " + esc(meta.label) + '</span>';
+}
+
+function archivedStripHTML(c) {
+  if (!c.archived) return "";
+  return '<div class="archived-strip"><span>📦 Archived' + (c.archivedAt ? " " + relTime(c.archivedAt) : "") + '</span>'
+    + '<button class="ts-btn" data-action="unarchive" data-id="' + esc(c.id) + '">Unarchive</button></div>';
+}
+
 function taskCardHTML(c) {
   var doneToday = c.recurring ? (c.recurringDone === todayStr()) : !!c.done;
   var dueTs = taskDueTimestamp(c);
   var overdue = !c.recurring && dueTs !== null && !doneToday && dueTs < Date.now();
+  var recurLabel = (Array.isArray(c.recurDays) && c.recurDays.length)
+    ? c.recurDays.slice().sort().map(function (d) { return WEEKDAY_ABBR[d]; }).join(",")
+    : "Daily";
   var badge = c.recurring
-    ? '<span class="task-badge task-recurring">↻ Daily' + (c.dueTime ? " at " + esc(formatTime(c.dueTime)) : "") + '</span>'
+    ? '<span class="task-badge task-recurring">↻ ' + esc(recurLabel) + (c.dueTime ? " at " + esc(formatTime(c.dueTime)) : "") + '</span>'
     : (c.dueDate || c.dueTime) ? '<span class="task-badge' + (overdue ? " task-overdue" : "") + '">' + esc(formatDue(c.dueDate, c.dueTime)) + '</span>' : "";
   var priorityBadge = c.priority === "high"
     ? '<span class="task-badge task-priority-high">● High</span>'
@@ -1034,11 +1236,16 @@ function taskCardHTML(c) {
   var checkSvg = doneToday
     ? '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>'
     : "";
-  return '<div class="clip-card is-task' + (doneToday ? " is-done" : "") + (overdue ? " is-overdue" : "") + (c.priority === "high" ? " is-priority-high" : "") + '" data-content="' + esc(c.content) + '">'
+  var selectBox = selectMode
+    ? '<div class="card-select' + (selectedIds.has(c.id) ? " checked" : "") + '"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></div>'
+    : "";
+  return '<div class="clip-card is-task' + (doneToday ? " is-done" : "") + (overdue ? " is-overdue" : "") + (c.priority === "high" ? " is-priority-high" : "") + (selectMode && selectedIds.has(c.id) ? " is-selected" : "") + '" data-id="' + esc(c.id) + '" data-content="' + esc(c.content) + '">'
+    + selectBox
     + '<div class="task-row">'
     + '<button class="task-check" data-action="toggle" data-id="' + esc(c.id) + '" title="' + (doneToday ? "Mark not done" : "Mark done") + '">' + checkSvg + '</button>'
     + '<div class="task-body"><div class="task-text">' + esc(c.content) + '</div>'
-    + (badge || priorityBadge ? '<div class="task-meta">' + priorityBadge + badge + '</div>' : '')
+    + (badge || priorityBadge || c.category ? '<div class="task-meta">' + priorityBadge + badge + categoryBadgeHTML(c) + '</div>' : '')
+    + archivedStripHTML(c)
     + '</div>'
     + '<button class="act-btn danger" data-action="delete" data-id="' + esc(c.id) + '" data-content=""><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/></svg></button>'
     + '</div></div>';
@@ -1072,11 +1279,17 @@ function cardHTML(c, q) {
       + '<button class="ts-dismiss" data-action="dismiss-suggest" data-id="'+esc(c.id)+'" title="Dismiss">&#10005;</button>'
       + '</div></div>'
     : "";
-  return '<div class="clip-card'+(isNote?" is-note":"")+'" data-content="'+esc(c.content)+'">'
+  var selectBox = selectMode
+    ? '<div class="card-select' + (selectedIds.has(c.id) ? " checked" : "") + '"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg></div>'
+    : "";
+  return '<div class="clip-card'+(isNote?" is-note":"")+(selectMode && selectedIds.has(c.id) ? " is-selected" : "")+'" data-id="'+esc(c.id)+'" data-content="'+esc(c.content)+'">'
+    + selectBox
     +'<div class="card-meta">'+fav+'<span class="domain">'+domain+'</span><span class="ts">'+relTime(c.createdAt)+'</span></div>'
     +'<div class="card-body'+(link?" is-link":"")+'">'+(maskedBody || hl(preview,q))+'</div>'
     + suggestStrip
+    + archivedStripHTML(c)
     +'<div class="card-foot"><span class="badge '+bc+'">'+bl+'</span>'
+    + categoryBadgeHTML(c)
     +'<div class="card-actions">'+openBtn+copyBtn+delBtn+'</div></div></div>';
 }
 
@@ -1090,33 +1303,49 @@ function taskSummaryHTML() {
   var today = todayStr();
   var done = 0, overdue = 0, upcoming = 0;
   tasks.forEach(function (c) {
+    if (c.recurring && !taskAppliesToday(c)) return; // not scheduled today — irrelevant to today's summary
     var doneToday = c.recurring ? (c.recurringDone === today) : !!c.done;
     if (doneToday) { done++; return; }
     var dueTs = taskDueTimestamp(c);
     if (!c.recurring && dueTs !== null && dueTs < Date.now()) overdue++;
     else upcoming++;
   });
+  var rescheduleBtn = overdue > 0
+    ? '<button class="ts-reschedule-all" data-action="reschedule-overdue">Reschedule to today</button>'
+    : "";
   return '<div class="task-summary">'
     + '<span class="ts-item ts-done">' + done + ' done</span>'
     + '<span class="ts-sep">·</span>'
     + '<span class="ts-item ts-overdue">' + overdue + ' overdue</span>'
     + '<span class="ts-sep">·</span>'
     + '<span class="ts-item ts-upcoming">' + upcoming + ' upcoming</span>'
+    + rescheduleBtn
     + '</div>';
 }
 
 function render(clips, q) {
+  lastRenderedClips = clips;
   var summary = activeFilter === "task" ? taskSummaryHTML() : "";
-  if (!clips.length) { clipsList.innerHTML = summary; emptyState.style.display = summary ? "none" : "flex"; return; }
+  if (!clips.length) { clipsList.innerHTML = summary; emptyState.style.display = summary ? "none" : "flex"; updateBulkBar(); return; }
   emptyState.style.display="none";
   clipsList.innerHTML=summary + clips.map(function(c){return cardHTML(c,q);}).join("");
   bindCardActions();
+  updateBulkBar();
 }
 
 function bindCardActions() {
   clipsList.querySelectorAll("img.fav").forEach(function(img){
     img.addEventListener("error", function(){ img.style.display = "none"; });
   });
+  if (selectMode) {
+    clipsList.querySelectorAll(".clip-card").forEach(function (el) {
+      el.addEventListener("click", function (e) {
+        e.stopPropagation();
+        toggleSelect(el.dataset.id);
+      });
+    });
+    return;
+  }
   clipsList.querySelectorAll("[data-action]").forEach(function(btn){
     btn.addEventListener("click",function(e){
       e.stopPropagation();
@@ -1127,6 +1356,8 @@ function bindCardActions() {
       if(action==="toggle") doToggleTask(id);
       if(action==="suggest-task")   doSuggestTask(id,content);
       if(action==="dismiss-suggest") doDismissSuggest(id);
+      if(action==="reschedule-overdue") doRescheduleOverdue();
+      if(action==="unarchive") doUnarchive(id);
     });
   });
   clipsList.querySelectorAll(".clip-card").forEach(function(el){
@@ -1145,6 +1376,7 @@ function doSuggestTask(id, content) {
     id: cryptoRandomId(), type: "task", content: content,
     url: "", title: "Task", favicon: "", domain: "task",
     createdAt: Date.now(), vector: embed(content), key: null,
+    category: categorize(content, null),
     dueDate: null, dueTime: null, recurring: false, priority: null,
     done: false, recurringDone: null, notifiedAt: null,
   }).then(function () { return deleteClip(id); })
@@ -1176,9 +1408,41 @@ function doToggleTask(id) {
     task.recurringDone = task.recurringDone === todayStr() ? null : todayStr();
   } else {
     task.done = !task.done;
+    task.completedAt = task.done ? Date.now() : null;
   }
   saveClip(task).then(function(){ renderFiltered(); updateDueBadge(); })
     .catch(function(){ showToast("Couldn't update task", "error"); });
+}
+
+function doUnarchive(id) {
+  var item = allClips.filter(function (c) { return c.id === id; })[0];
+  if (!item) { showToast("Item not found", "error"); return; }
+  item.archived = false;
+  item.archivedAt = null;
+  saveClip(item).then(function () { showToast("Unarchived", "success"); loadClips(); })
+    .catch(function () { showToast("Couldn't unarchive", "error"); });
+}
+
+// Bulk-friendly version of a single reschedule — pushes every currently
+// overdue (non-recurring) task's date to today in one confirm, for when
+// things have piled up instead of clicking through them one by one.
+function doRescheduleOverdue() {
+  var today = todayStr();
+  var now = Date.now();
+  var overdueTasks = allClips.filter(function (c) {
+    if (c.type !== "task" || c.recurring || c.done) return false;
+    var dueTs = taskDueTimestamp(c);
+    return dueTs !== null && dueTs < now;
+  });
+  if (!overdueTasks.length) { showToast("No overdue tasks"); return; }
+  if (!confirm("Reschedule " + overdueTasks.length + " overdue task(s) to today?")) return;
+  Promise.all(overdueTasks.map(function (c) {
+    var updated = Object.assign({}, c, { dueDate: today, recurring: false, recurDays: null, notifiedAt: null });
+    return saveClip(updated);
+  })).then(function () {
+    showToast(overdueTasks.length + " task(s) rescheduled to today", "success");
+    loadClips();
+  });
 }
 
 // Upserts by id (IndexedDB .put() on the "id" keyPath), so the existing
@@ -1193,17 +1457,18 @@ function doEdit(id, newContent) {
   var clean = existing.type === "note" ? newContent : stripSensitive(newContent);
   var key = extractKey(clean);
   maybeEncrypt(clean, key).then(function (r) {
-    var updated = Object.assign({}, existing, { content: r.content, vector: embed(clean), key: key, sensitive: r.sensitive });
+    var updated = Object.assign({}, existing, { content: r.content, vector: embed(clean), key: key, sensitive: r.sensitive, category: categorize(clean, existing.domain) });
     return saveClip(updated);
   }).then(function () { showToast("Updated!", "success"); loadClips(); })
     .catch(function () { showToast("Update failed", "error"); });
 }
 
-function doReschedule(id, dueDate, dueTime, recurring) {
+function doReschedule(id, dueDate, dueTime, recurring, recurDays) {
   var existing = allClips.filter(function (c) { return c.id === id; })[0];
   if (!existing) { showToast("Task not found", "error"); return; }
   var updated = Object.assign({}, existing, {
-    dueDate: dueDate || null, dueTime: dueTime || null, recurring: !!recurring, notifiedAt: null,
+    dueDate: dueDate || null, dueTime: dueTime || null, recurring: !!recurring,
+    recurDays: (Array.isArray(recurDays) && recurDays.length) ? recurDays : null, notifiedAt: null,
   });
   saveClip(updated).then(function () {
     showToast("Rescheduled!", "success"); loadClips(); updateDueBadge();
@@ -1293,4 +1558,71 @@ function runSelectedPaletteAction() {
   var action = cmdkFiltered[cmdkSelected];
   closePalette();
   if (action) action.run();
+}
+
+// ── Bulk select ───────────────────────────────────────────────────────────────
+function initSelectMode() {
+  selectModeBtn.addEventListener("click", function () {
+    selectMode = !selectMode;
+    if (!selectMode) selectedIds.clear();
+    selectModeBtn.classList.toggle("active", selectMode);
+    renderFiltered();
+  });
+  bulkCancel.addEventListener("click", function () {
+    selectMode = false;
+    selectedIds.clear();
+    selectModeBtn.classList.remove("active");
+    renderFiltered();
+  });
+  bulkSelectAll.addEventListener("click", function () {
+    var allSelected = lastRenderedClips.length > 0 && lastRenderedClips.every(function (c) { return selectedIds.has(c.id); });
+    if (allSelected) selectedIds.clear();
+    else lastRenderedClips.forEach(function (c) { selectedIds.add(c.id); });
+    renderFiltered();
+  });
+  bulkDelete.addEventListener("click", function () {
+    if (!selectedIds.size) { showToast("Nothing selected"); return; }
+    var ids = Array.from(selectedIds);
+    if (!confirm("Delete " + ids.length + " item(s)? This cannot be undone.")) return;
+    Promise.all(ids.map(function (id) { return deleteClip(id); })).then(function () {
+      selectedIds.clear();
+      showToast(ids.length + " item(s) deleted", "success");
+      loadClips();
+    });
+  });
+  bulkExport.addEventListener("click", function () {
+    if (!selectedIds.size) { showToast("Nothing selected"); return; }
+    var items = allClips.filter(function (c) { return selectedIds.has(c.id); }).map(clipToExportItem);
+    downloadBackup(items);
+    showToast(items.length + " item(s) exported", "success");
+  });
+  bulkAddTasks.addEventListener("click", function () {
+    var targets = lastRenderedClips.filter(function (c) { return selectedIds.has(c.id) && c.type !== "task" && c.type !== "note"; });
+    if (!targets.length) { showToast("Select some clips (not notes/tasks) first", "error"); return; }
+    Promise.all(targets.map(function (c) {
+      return saveClip({
+        id: cryptoRandomId(), type: "task", content: c.content,
+        url: "", title: "Task", favicon: "", domain: "task",
+        createdAt: Date.now(), vector: embed(c.content), key: null,
+        category: categorize(c.content, null),
+        dueDate: null, dueTime: null, recurring: false, priority: null,
+        done: false, recurringDone: null, notifiedAt: null,
+      }).then(function () { return deleteClip(c.id); });
+    })).then(function () {
+      selectedIds.clear();
+      showToast(targets.length + " item(s) added as tasks", "success");
+      loadClips();
+    });
+  });
+}
+function toggleSelect(id) {
+  if (!id) return;
+  if (selectedIds.has(id)) selectedIds.delete(id); else selectedIds.add(id);
+  renderFiltered();
+}
+function updateBulkBar() {
+  if (!bulkBar) return;
+  bulkBar.style.display = selectMode ? "flex" : "none";
+  bulkCount.textContent = selectedIds.size + " selected";
+  clipsList.classList.toggle("select-mode", selectMode);
 }
