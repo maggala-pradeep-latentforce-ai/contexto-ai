@@ -30,7 +30,7 @@ var themeBtn, themeIconMoon, themeIconSun;
 var quickTaskBtn, quickTaskForm, qtText, qtDate, qtTime, qtPriority, qtRecurring, qtDays, qtCancel, qtSave;
 var qtSelectedDays = [];
 var exportBtn, importBtn, importFile;
-var streakBadge, onboardTip, onboardTipText, onboardSkip, onboardNext;
+var streakBadge, shareStreakBtn, onboardTip, onboardTipText, onboardSkip, onboardNext;
 var cmdkBtn, cmdkOverlay, cmdkInput, cmdkList;
 var selectModeBtn, bulkBar, bulkCount, bulkSelectAll, bulkAddTasks, bulkExport, bulkDelete, bulkCancel;
 var hasApiKey = false;
@@ -112,6 +112,7 @@ document.addEventListener("DOMContentLoaded", function () {
   importBtn     = document.getElementById("importBtn");
   importFile    = document.getElementById("importFile");
   streakBadge   = document.getElementById("streakBadge");
+  shareStreakBtn = document.getElementById("shareStreakBtn");
   onboardTip    = document.getElementById("onboardTip");
   onboardTipText= document.getElementById("onboardTipText");
   onboardSkip   = document.getElementById("onboardSkip");
@@ -211,6 +212,55 @@ function renderStreakBadge(streak) {
   if (!streakBadge) return;
   if (streak > 0) { streakBadge.textContent = "🔥 " + streak; streakBadge.style.display = ""; }
   else streakBadge.style.display = "none";
+  if (shareStreakBtn) shareStreakBtn.style.display = streak > 0 ? "" : "none";
+}
+
+// ── Shareable streak card ────────────────────────────────────────────────────
+// Pure Canvas 2D drawing — see src/sidepanel/index.js for the extension's
+// identical implementation (keep both in sync if you change one).
+function generateStreakCardBlob(streak) {
+  return new Promise(function (resolve) {
+    var canvas = document.createElement("canvas");
+    canvas.width = 600; canvas.height = 600;
+    var ctx = canvas.getContext("2d");
+    var grad = ctx.createLinearGradient(0, 0, 600, 600);
+    grad.addColorStop(0, "#6c74e8");
+    grad.addColorStop(1, "#0ea5b8");
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, 600, 600);
+    ctx.textAlign = "center";
+    ctx.fillStyle = "#fff";
+    ctx.font = "150px -apple-system, BlinkMacSystemFont, sans-serif";
+    ctx.fillText("🔥", 300, 260);
+    ctx.font = "bold 110px -apple-system, BlinkMacSystemFont, sans-serif";
+    ctx.fillText(String(streak), 300, 400);
+    ctx.font = "600 30px -apple-system, BlinkMacSystemFont, sans-serif";
+    ctx.fillText("DAY STREAK", 300, 445);
+    ctx.globalAlpha = 0.85;
+    ctx.font = "600 20px -apple-system, BlinkMacSystemFont, sans-serif";
+    ctx.fillText("Contexto AI — clear your tasks every day", 300, 545);
+    ctx.globalAlpha = 1;
+    canvas.toBlob(function (blob) { resolve(blob); }, "image/png");
+  });
+}
+function shareStreakCard() {
+  var streak = 0;
+  try { streak = parseInt(localStorage.getItem("ctx_streak_count") || "0", 10) || 0; } catch (_) {}
+  if (!streak) { showToast("No streak yet — clear a day's tasks first!"); return; }
+  generateStreakCardBlob(streak).then(function (blob) {
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement("a");
+    a.href = url; a.download = "contexto-streak-" + streak + ".png";
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    if (navigator.clipboard && window.ClipboardItem) {
+      navigator.clipboard.write([new ClipboardItem({ "image/png": blob })])
+        .then(function () { showToast("Streak card downloaded + copied!", "success"); })
+        .catch(function () { showToast("Streak card downloaded!", "success"); });
+    } else {
+      showToast("Streak card downloaded!", "success");
+    }
+  });
 }
 
 function celebrate() {
@@ -409,6 +459,7 @@ function init() {
   });
 
   clearBtn.addEventListener("click", confirmClearAll);
+  shareStreakBtn.addEventListener("click", shareStreakCard);
   settingsBtn.addEventListener("click", showSettings);
   backBtn.addEventListener("click", hideSettings);
   saveSettingsBtn.addEventListener("click", doSaveSettings);
@@ -922,6 +973,39 @@ function loadClips() {
   }).catch(function (e) { console.error("[Contexto]", e); });
 }
 
+// ── Related items ─────────────────────────────────────────────────────────────
+// Direct local cosine-similarity against the item's own already-computed
+// vector — synchronous, no extra embedding call, no LLM cost.
+var relatedOpenId = null;
+function findRelated(item) {
+  if (!item.vector) return [];
+  return allClips
+    .filter(function (o) { return o.id !== item.id && o.vector && !o.archived; })
+    .map(function (o) {
+      var score = cosineSim(item.vector, o.vector);
+      var overlap = keyOverlap(item.content, o.key);
+      if (overlap > 0) score = Math.max(score, 0.5 + overlap * 0.5);
+      return { item: o, score: score };
+    })
+    .filter(function (x) { return x.score > 0.2; })
+    .sort(function (a, b) { return b.score - a.score; })
+    .slice(0, 3)
+    .map(function (x) { return x.item; });
+}
+function doToggleRelated(id) {
+  relatedOpenId = relatedOpenId === id ? null : id;
+  renderFiltered();
+}
+function relatedStripHTML(c) {
+  if (relatedOpenId !== c.id) return "";
+  var rel = findRelated(c);
+  if (!rel.length) return '<div class="related-strip"><span class="related-status">No related items found</span></div>';
+  return '<div class="related-strip">' + rel.map(function (r) {
+    var preview = (r.content || "").replace(/\r?\n/g, " ").slice(0, 70);
+    return '<div class="related-item" data-action="copy" data-content="' + esc(r.content) + '">' + esc(preview) + '</div>';
+  }).join("") + '</div>';
+}
+
 // The Archived pill only shows up once something has actually been
 // archived — an empty pill in a fresh install would just be confusing.
 function updateArchivedPillVisibility() {
@@ -1246,7 +1330,9 @@ function taskCardHTML(c) {
     + '<div class="task-body"><div class="task-text">' + esc(c.content) + '</div>'
     + (badge || priorityBadge || c.category ? '<div class="task-meta">' + priorityBadge + badge + categoryBadgeHTML(c) + '</div>' : '')
     + archivedStripHTML(c)
+    + relatedStripHTML(c)
     + '</div>'
+    + '<button class="act-btn" data-action="related" data-id="' + esc(c.id) + '" title="Show related items"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></button>'
     + '<button class="act-btn danger" data-action="delete" data-id="' + esc(c.id) + '" data-content=""><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/></svg></button>'
     + '</div></div>';
 }
@@ -1271,6 +1357,7 @@ function cardHTML(c, q) {
     ?'<button class="act-btn" data-action="open" data-content="'+esc(c.content)+'"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>Open</button>'
     :"";
   var copyBtn='<button class="act-btn" data-action="copy" data-content="'+esc(c.content)+'"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>Copy</button>';
+  var relatedBtn='<button class="act-btn" data-action="related" data-id="'+esc(c.id)+'" title="Show related items"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></button>';
   var delBtn='<button class="act-btn danger" data-action="delete" data-id="'+esc(c.id)+'" data-content=""><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/></svg></button>';
   var suggestTask = !isNote && !c.sensitive && looksLikeTaskContent(c.content) && getDismissedSuggestions().indexOf(c.id) === -1;
   var suggestStrip = suggestTask
@@ -1288,9 +1375,10 @@ function cardHTML(c, q) {
     +'<div class="card-body'+(link?" is-link":"")+'">'+(maskedBody || hl(preview,q))+'</div>'
     + suggestStrip
     + archivedStripHTML(c)
+    + relatedStripHTML(c)
     +'<div class="card-foot"><span class="badge '+bc+'">'+bl+'</span>'
     + categoryBadgeHTML(c)
-    +'<div class="card-actions">'+openBtn+copyBtn+delBtn+'</div></div></div>';
+    +'<div class="card-actions">'+openBtn+copyBtn+relatedBtn+delBtn+'</div></div></div>';
 }
 
 // "3 done · 2 overdue · 4 upcoming" — a quick at-a-glance status shown above
@@ -1358,6 +1446,7 @@ function bindCardActions() {
       if(action==="dismiss-suggest") doDismissSuggest(id);
       if(action==="reschedule-overdue") doRescheduleOverdue();
       if(action==="unarchive") doUnarchive(id);
+      if(action==="related") doToggleRelated(id);
     });
   });
   clipsList.querySelectorAll(".clip-card").forEach(function(el){

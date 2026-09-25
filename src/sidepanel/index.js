@@ -75,7 +75,7 @@ var themeBtn, themeIconMoon, themeIconSun;
 var quickTaskBtn, quickTaskForm, qtText, qtDate, qtTime, qtPriority, qtRecurring, qtDays, qtCancel, qtSave;
 var qtSelectedDays = [];
 var exportBtn, importBtn, importFile;
-var streakBadge, onboardTip, onboardTipText, onboardSkip, onboardNext;
+var streakBadge, shareStreakBtn, onboardTip, onboardTipText, onboardSkip, onboardNext;
 var cmdkBtn, cmdkOverlay, cmdkInput, cmdkList;
 var selectModeBtn, bulkBar, bulkCount, bulkSelectAll, bulkAddTasks, bulkExport, bulkDelete, bulkCancel;
 var hasApiKey = false;
@@ -121,6 +121,7 @@ document.addEventListener("DOMContentLoaded", function () {
   importBtn     = document.getElementById("importBtn");
   importFile    = document.getElementById("importFile");
   streakBadge   = document.getElementById("streakBadge");
+  shareStreakBtn = document.getElementById("shareStreakBtn");
   onboardTip    = document.getElementById("onboardTip");
   onboardTipText= document.getElementById("onboardTipText");
   onboardSkip   = document.getElementById("onboardSkip");
@@ -218,6 +219,57 @@ function renderStreakBadge(streak) {
   if (!streakBadge) return;
   if (streak > 0) { streakBadge.textContent = "🔥 " + streak; streakBadge.style.display = ""; }
   else streakBadge.style.display = "none";
+  if (shareStreakBtn) shareStreakBtn.style.display = streak > 0 ? "" : "none";
+}
+
+// ── Shareable streak card ────────────────────────────────────────────────────
+// Pure Canvas 2D drawing — no external library, no network call — so it
+// works identically in the extension and the desktop app. Downloads a PNG
+// and, where the browser supports it, also copies the image straight to
+// the clipboard so it can be pasted directly into a chat app.
+function generateStreakCardBlob(streak) {
+  return new Promise(function (resolve) {
+    var canvas = document.createElement("canvas");
+    canvas.width = 600; canvas.height = 600;
+    var ctx = canvas.getContext("2d");
+    var grad = ctx.createLinearGradient(0, 0, 600, 600);
+    grad.addColorStop(0, "#6c74e8");
+    grad.addColorStop(1, "#0ea5b8");
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, 600, 600);
+    ctx.textAlign = "center";
+    ctx.fillStyle = "#fff";
+    ctx.font = "150px -apple-system, BlinkMacSystemFont, sans-serif";
+    ctx.fillText("🔥", 300, 260);
+    ctx.font = "bold 110px -apple-system, BlinkMacSystemFont, sans-serif";
+    ctx.fillText(String(streak), 300, 400);
+    ctx.font = "600 30px -apple-system, BlinkMacSystemFont, sans-serif";
+    ctx.fillText(streak === 1 ? "DAY STREAK" : "DAY STREAK", 300, 445);
+    ctx.globalAlpha = 0.85;
+    ctx.font = "600 20px -apple-system, BlinkMacSystemFont, sans-serif";
+    ctx.fillText("Contexto AI — clear your tasks every day", 300, 545);
+    ctx.globalAlpha = 1;
+    canvas.toBlob(function (blob) { resolve(blob); }, "image/png");
+  });
+}
+function shareStreakCard() {
+  var streak = 0;
+  try { streak = parseInt(localStorage.getItem("ctx_streak_count") || "0", 10) || 0; } catch (_) {}
+  if (!streak) { showToast("No streak yet — clear a day's tasks first!"); return; }
+  generateStreakCardBlob(streak).then(function (blob) {
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement("a");
+    a.href = url; a.download = "contexto-streak-" + streak + ".png";
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    if (navigator.clipboard && window.ClipboardItem) {
+      navigator.clipboard.write([new ClipboardItem({ "image/png": blob })])
+        .then(function () { showToast("Streak card downloaded + copied!", "success"); })
+        .catch(function () { showToast("Streak card downloaded!", "success"); });
+    } else {
+      showToast("Streak card downloaded!", "success");
+    }
+  });
 }
 
 function celebrate() {
@@ -363,6 +415,7 @@ function init() {
   });
 
   clearBtn.addEventListener("click", confirmClearAll);
+  shareStreakBtn.addEventListener("click", shareStreakCard);
   settingsBtn.addEventListener("click", showSettings);
   backBtn.addEventListener("click", hideSettings);
   saveSettingsBtn.addEventListener("click", doSaveSettings);
@@ -766,8 +819,35 @@ function send(data) {
 function loadClips() {
   send({ type: MSG.GET_ALL_CLIPS }).then(function (r) {
     allClips = (r && r.clips) ? r.clips : [];
+    relatedCache = {};
     updateCount(); renderCategoryOptions(); updateArchivedPillVisibility(); renderFiltered(); checkStreak();
   }).catch(function (e) { console.error("[Contexto]", e); });
+}
+
+// ── Related items ─────────────────────────────────────────────────────────────
+// Re-uses the existing local similarity search (the item's own content as
+// the query) instead of anything new — no extra LLM call, no extra cost,
+// works with or without an API key configured.
+var relatedOpenId = null, relatedCache = {};
+function doToggleRelated(id, content) {
+  if (relatedOpenId === id) { relatedOpenId = null; renderFiltered(); return; }
+  relatedOpenId = id;
+  if (relatedCache[id]) { renderFiltered(); return; }
+  send({ type: MSG.SEARCH_CLIPS, data: { query: content } }).then(function (r) {
+    var results = (r && r.results) || [];
+    relatedCache[id] = results.filter(function (x) { return x.id !== id && x._score > 0.2; }).slice(0, 3);
+    renderFiltered();
+  }).catch(function () { relatedCache[id] = []; renderFiltered(); });
+}
+function relatedStripHTML(c) {
+  if (relatedOpenId !== c.id) return "";
+  var rel = relatedCache[c.id];
+  if (rel === undefined) return '<div class="related-strip"><span class="related-status">Finding related items…</span></div>';
+  if (!rel.length) return '<div class="related-strip"><span class="related-status">No related items found</span></div>';
+  return '<div class="related-strip">' + rel.map(function (r) {
+    var preview = (r.content || "").replace(/\r?\n/g, " ").slice(0, 70);
+    return '<div class="related-item" data-action="copy" data-content="' + esc(r.content) + '">' + esc(preview) + '</div>';
+  }).join("") + '</div>';
 }
 
 // The Archived pill only shows up once something has actually been
@@ -933,7 +1013,9 @@ function taskCardHTML(c) {
     + '<div class="task-body"><div class="task-text">' + esc(c.content) + '</div>'
     + (badge || priorityBadge || c.category ? '<div class="task-meta">' + priorityBadge + badge + categoryBadgeHTML(c) + '</div>' : '')
     + archivedStripHTML(c)
+    + relatedStripHTML(c)
     + '</div>'
+    + '<button class="act-btn" data-action="related" data-id="' + esc(c.id) + '" data-content="' + esc(c.content) + '" title="Show related items"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></button>'
     + '<button class="act-btn danger" data-action="delete" data-id="' + esc(c.id) + '" data-content=""><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/></svg></button>'
     + '</div></div>';
 }
@@ -958,6 +1040,7 @@ function cardHTML(c, q) {
     ?'<button class="act-btn" data-action="open" data-content="'+esc(c.content)+'"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>Open</button>'
     :"";
   var copyBtn='<button class="act-btn" data-action="copy" data-content="'+esc(c.content)+'"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>Copy</button>';
+  var relatedBtn='<button class="act-btn" data-action="related" data-id="'+esc(c.id)+'" data-content="'+esc(c.content)+'" title="Show related items"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg></button>';
   var delBtn='<button class="act-btn danger" data-action="delete" data-id="'+esc(c.id)+'" data-content=""><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/></svg></button>';
   var suggestTask = !isNote && !c.sensitive && looksLikeTaskContent(c.content) && getDismissedSuggestions().indexOf(c.id) === -1;
   var suggestStrip = suggestTask
@@ -975,9 +1058,10 @@ function cardHTML(c, q) {
     +'<div class="card-body'+(link?" is-link":"")+'">'+(maskedBody || hl(preview,q))+'</div>'
     + suggestStrip
     + archivedStripHTML(c)
+    + relatedStripHTML(c)
     +'<div class="card-foot"><span class="badge '+bc+'">'+bl+'</span>'
     + categoryBadgeHTML(c)
-    +'<div class="card-actions">'+openBtn+copyBtn+delBtn+'</div></div></div>';
+    +'<div class="card-actions">'+openBtn+copyBtn+relatedBtn+delBtn+'</div></div></div>';
 }
 
 // "3 done · 2 overdue · 4 upcoming" — a quick at-a-glance status shown above
@@ -1045,6 +1129,7 @@ function bindCardActions() {
       if(action==="dismiss-suggest") doDismissSuggest(id);
       if(action==="reschedule-overdue") doRescheduleOverdue();
       if(action==="unarchive") doUnarchive(id);
+      if(action==="related") doToggleRelated(id, content);
     });
   });
   clipsList.querySelectorAll(".clip-card").forEach(function(el){

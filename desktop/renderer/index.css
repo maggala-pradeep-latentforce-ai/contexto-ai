@@ -230,6 +230,19 @@ body {
 .pill-archived { color: var(--text3); }
 .pill-archived.active { background: var(--surface2); border-color: var(--text3); color: var(--text2); }
 
+.related-strip {
+  margin-top: 8px; padding: 6px 8px; border-radius: var(--r-sm);
+  background: rgba(var(--accent2-rgb),0.07); border: 1px solid rgba(var(--accent2-rgb),0.2);
+  display: flex; flex-direction: column; gap: 4px;
+}
+.related-status { font-size: 11px; color: var(--text3); padding: 2px 2px; }
+.related-item {
+  font-size: 11px; color: var(--text2); padding: 4px 6px; border-radius: 6px;
+  cursor: pointer; background: var(--bg); border: 1px solid var(--border);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.related-item:hover { border-color: var(--accent2); color: var(--accent2); }
+
 .card-foot { display: flex; align-items: center; gap: 6px; margin-top: 9px; }
 .card-actions {
   display: flex; gap: 4px; margin-left: auto;
