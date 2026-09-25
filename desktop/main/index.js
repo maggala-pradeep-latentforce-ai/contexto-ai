@@ -171,6 +171,11 @@ function createPanel() {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      // The panel spends almost all its time hidden (minimized to just the
+      // launcher button) — Electron's default throttles JS timers in hidden
+      // windows, which would silently stall the task-notification interval
+      // exactly when it matters most. Keep it running at full speed always.
+      backgroundThrottling: false,
     },
   });
 
@@ -250,14 +255,30 @@ function togglePanel() {
 }
 
 // ── Tray icon — secondary access (Quit lives only here) ──────────────────────
+// Doubles as a quick-glance: the renderer (which owns the task data) pushes
+// its current today's-tasks list down via IPC any time it changes, so you
+// can see what's due without opening the panel at all.
+let trayTasks = [];
+function updateTrayMenu() {
+  if (!tray) return;
+  const items = [
+    { label: 'Open / Minimize Contexto', click: togglePanel },
+    { type: 'separator' },
+  ];
+  if (trayTasks.length) {
+    trayTasks.forEach((t) => {
+      items.push({ label: (t.overdue ? '⚠ ' : '• ') + t.label, click: togglePanel });
+    });
+  } else {
+    items.push({ label: 'No tasks due today', enabled: false });
+  }
+  items.push({ type: 'separator' }, { label: 'Quit', click: () => app.quit() });
+  tray.setContextMenu(Menu.buildFromTemplate(items));
+}
 function createTray() {
   tray = new Tray(path.join(__dirname, '..', 'build', 'tray.png'));
   tray.setToolTip('Contexto AI — ' + HOTKEY.replace('CommandOrControl', process.platform === 'darwin' ? 'Cmd' : 'Ctrl'));
-  tray.setContextMenu(Menu.buildFromTemplate([
-    { label: 'Open / Minimize Contexto', click: togglePanel },
-    { type: 'separator' },
-    { label: 'Quit', click: () => app.quit() },
-  ]));
+  updateTrayMenu();
   tray.on('click', togglePanel);
 }
 
@@ -293,6 +314,13 @@ ipcMain.on('launcher:move-by', (_e, { dx, dy }) => {
   if (!launcher || launcher.isDestroyed()) return;
   const b = launcher.getBounds();
   launcher.setBounds({ ...b, x: Math.round(b.x + dx), y: Math.round(b.y + dy) });
+});
+ipcMain.on('launcher:due-count', (_e, count) => {
+  if (launcher && !launcher.isDestroyed()) launcher.webContents.send('due-count-update', count);
+});
+ipcMain.on('tray:update-tasks', (_e, tasks) => {
+  trayTasks = Array.isArray(tasks) ? tasks : [];
+  updateTrayMenu();
 });
 ipcMain.on('shell:open-external', (_e, url) => {
   if (typeof url === 'string' && /^https?:\/\//i.test(url)) shell.openExternal(url);

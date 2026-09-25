@@ -13,6 +13,7 @@
   /* Gradient ring wrapper — the button's own solid circle sits inside it,
      inset by the ring's thickness, like an avatar with a colored border. */
   .ring {
+    position: relative;
     width: 56px; height: 56px; border-radius: 50%;
     padding: 2px;
     background: linear-gradient(135deg, #6c74e8, #0ea5b8);
@@ -36,13 +37,29 @@
     width: 30px; height: 30px; object-fit: contain;
     pointer-events: none;
   }
+  /* A task is due — can't miss this even with the panel minimized and OS
+     notifications silenced/unpermitted. */
+  .ring.has-due { animation: due-pulse 1.4s ease-in-out infinite; }
+  @keyframes due-pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(239,68,68,0.55); }
+    50%      { box-shadow: 0 0 0 9px rgba(239,68,68,0); }
+  }
+  .due-badge {
+    position: absolute; top: -2px; right: -2px;
+    min-width: 18px; height: 18px; padding: 0 4px;
+    border-radius: 9px; background: #ef4444; color: #fff;
+    font: 700 11px/18px -apple-system, sans-serif; text-align: center;
+    border: 2px solid #fff; display: none;
+  }
+  .due-badge.show { display: block; }
 </style>
 </head>
 <body>
-  <div class="ring">
+  <div class="ring" id="ring">
     <button id="launcherBtn" title="Open / minimize Contexto (⇧⌘K) — drag to move">
       <img src="./icons/icon48.png" alt="">
     </button>
+    <span class="due-badge" id="dueBadge"></span>
   </div>
   <script src="./launcher.js"></script>
 </body>

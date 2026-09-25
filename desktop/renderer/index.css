@@ -80,6 +80,12 @@ body {
   border-radius: 20px; border: 1px solid var(--border);
   font-variant-numeric: tabular-nums;
 }
+.streak-badge {
+  font-size: 10.5px; font-weight: 700; color: #e8912d;
+  background: rgba(232,145,45,0.1); padding: 3px 9px;
+  border-radius: 20px; border: 1px solid rgba(232,145,45,0.3);
+  font-variant-numeric: tabular-nums;
+}
 .header button { -webkit-app-region: no-drag; }
 .icon-btn {
   background: none; border: 1px solid var(--border); color: var(--text2);
@@ -164,6 +170,24 @@ body {
   word-break: break-word;
 }
 .card-body.is-link { color: var(--link); }
+
+.task-suggest {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  margin-top: 8px; padding: 5px 8px; border-radius: var(--r-sm);
+  background: rgba(var(--accent-rgb),0.08); border: 1px dashed rgba(var(--accent-rgb),0.35);
+  font-size: 11px; color: var(--accent);
+}
+.ts-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.ts-btn {
+  background: var(--accent); border: none; color: #fff; font-size: 10.5px; font-weight: 600;
+  padding: 3px 9px; border-radius: 10px; cursor: pointer; font-family: inherit;
+}
+.ts-btn:hover { opacity: 0.88; }
+.ts-dismiss {
+  background: none; border: none; color: var(--text3); cursor: pointer; font-size: 11px;
+  padding: 2px 3px; line-height: 1;
+}
+.ts-dismiss:hover { color: var(--text); }
 
 .card-foot { display: flex; align-items: center; gap: 6px; margin-top: 9px; }
 .card-actions {
@@ -258,15 +282,110 @@ mark { background: rgba(var(--accent-rgb),0.2); color: var(--mark-text); border-
 .composer textarea::placeholder { color: var(--text3); }
 
 /* ── Composer hint ── */
+.composer-row {
+  display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 8px; padding: 3px 14px 0; flex-shrink: 0;
+}
 .composer-hint {
   font-size: 11px;
-  padding: 3px 14px 0;
   min-height: 16px;
-  flex-shrink: 0;
+  flex: 1;
 }
 .hint-query { color: var(--accent2); }
 .hint-save  { color: var(--green); }
 .hint-warn  { color: var(--red); }
+.hint-task  { color: var(--accent); }
+
+/* ── Manual quick-add (no AI needed) ── */
+.quick-task-btn {
+  flex-shrink: 0; font-size: 11px; font-weight: 600; color: var(--text2);
+  background: var(--surface); border: 1px solid var(--border);
+  padding: 3px 9px; border-radius: 20px; cursor: pointer;
+  font-family: inherit; transition: color 0.14s, border-color 0.14s;
+}
+.quick-task-btn:hover { color: var(--accent); border-color: var(--accent); }
+.quick-task-form {
+  margin: 8px 14px 0; padding: 10px; background: var(--surface);
+  border: 1px solid var(--border); border-radius: var(--r);
+}
+.quick-task-form input[type="text"] {
+  width: 100%; background: var(--bg); border: 1px solid var(--border);
+  border-radius: var(--r-sm); color: var(--text); font-size: 12.5px;
+  padding: 7px 10px; outline: none; font-family: inherit;
+}
+.quick-task-form input[type="text"]:focus { border-color: var(--accent); }
+.qt-row { display: flex; align-items: center; gap: 6px; margin-top: 7px; flex-wrap: wrap; }
+.qt-row input[type="date"], .qt-row input[type="time"] {
+  background: var(--bg); border: 1px solid var(--border); border-radius: var(--r-sm);
+  color: var(--text); font-size: 11.5px; padding: 5px 6px; outline: none; font-family: inherit;
+}
+.qt-priority {
+  background: var(--bg); border: 1px solid var(--border); border-radius: var(--r-sm);
+  color: var(--text); font-size: 11.5px; padding: 5px 6px; outline: none; font-family: inherit; cursor: pointer;
+}
+.qt-recurring { display: flex; align-items: center; gap: 4px; font-size: 11.5px; color: var(--text2); cursor: pointer; }
+.qt-actions { display: flex; justify-content: flex-end; gap: 6px; margin-top: 9px; }
+.qt-cancel {
+  background: none; border: 1px solid var(--border); color: var(--text2);
+  padding: 5px 12px; border-radius: var(--r-sm); font-size: 12px; cursor: pointer; font-family: inherit;
+}
+.qt-save {
+  background: var(--accent); border: none; color: #fff;
+  padding: 5px 14px; border-radius: var(--r-sm); font-size: 12px; font-weight: 600;
+  cursor: pointer; font-family: inherit;
+}
+.qt-save:hover { opacity: 0.88; }
+
+/* ── Onboarding examples (empty state) ── */
+.empty-examples { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; width: 100%; max-width: 260px; }
+.example-chip {
+  background: var(--surface); border: 1px solid var(--border); color: var(--text2);
+  font-size: 11.5px; text-align: left; padding: 7px 11px; border-radius: 20px;
+  cursor: pointer; font-family: inherit; transition: color 0.14s, border-color 0.14s;
+}
+.example-chip:hover { color: var(--accent); border-color: var(--accent); }
+
+/* ── Tasks ── */
+.task-summary {
+  display: flex; align-items: center; gap: 7px; padding: 3px 2px 10px;
+  font-size: 11.5px; font-weight: 600; color: var(--text2);
+}
+.ts-sep { color: var(--border); }
+.ts-item.ts-done { color: var(--green); }
+.ts-item.ts-overdue { color: var(--red); }
+.ts-item.ts-upcoming { color: var(--accent); }
+/* Left border = status at a glance: neutral (pending, no urgency), accent
+   (has a deadline, not overdue), red (overdue), green (done). */
+.clip-card.is-task { padding: 10px 13px 10px 11px; border-left: 3px solid var(--border); }
+.clip-card.is-task:has(.task-badge:not(.task-overdue)) { border-left-color: var(--accent); }
+.clip-card.is-task.is-priority-high { border-left-color: #e8912d; }
+.clip-card.is-task.is-overdue { border-left-color: var(--red); }
+.clip-card.is-task.is-done { border-left-color: var(--green); }
+.task-row { display: flex; align-items: flex-start; gap: 10px; }
+.task-check {
+  flex-shrink: 0; width: 20px; height: 20px; margin-top: 1px;
+  border-radius: 50%; border: 1.5px solid var(--border);
+  background: var(--surface); color: #fff; padding: 0;
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer; transition: background 0.14s, border-color 0.14s;
+}
+.task-check:hover { border-color: var(--accent); }
+.is-done .task-check { background: var(--green); border-color: var(--green); }
+.task-body { flex: 1; min-width: 0; }
+.task-text { font-size: 12.5px; color: var(--text); line-height: 1.5; word-break: break-word; }
+.is-done .task-text { color: var(--text3); text-decoration: line-through; }
+.task-meta { margin-top: 5px; }
+.task-badge {
+  font-size: 9.5px; font-weight: 600; color: var(--text2);
+  background: var(--surface2); border: 1px solid var(--border);
+  padding: 2px 7px; border-radius: 10px; display: inline-block;
+}
+.task-badge.task-recurring { color: var(--accent2); }
+.task-badge.task-overdue { color: var(--red); border-color: rgba(var(--red-rgb),0.35); background: rgba(var(--red-rgb),0.08); }
+.task-badge.task-priority-high { color: #e8912d; border-color: rgba(232,145,45,0.35); background: rgba(232,145,45,0.1); }
+.task-badge.task-priority-medium { color: var(--text2); border-color: var(--border); }
+.is-task .act-btn.danger { opacity: 0; transition: opacity 0.15s; }
+.is-task:hover .act-btn.danger { opacity: 1; }
 
 /* ── AI Status bar ── */
 .ai-status {
@@ -279,6 +398,35 @@ mark { background: rgba(var(--accent-rgb),0.2); color: var(--mark-text); border-
 }
 .ai-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); animation: pulse 1s ease-in-out infinite; }
 @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+
+/* ── Onboarding tip ── */
+.onboard-tip {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 14px;
+  background: rgba(var(--accent-rgb),0.08);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.ot-text { font-size: 11.5px; color: var(--text2); line-height: 1.5; flex: 1; }
+.ot-actions { display: flex; gap: 6px; flex-shrink: 0; }
+.ot-skip {
+  background: none; border: none; color: var(--text3); font-size: 11px;
+  cursor: pointer; font-family: inherit; padding: 4px 6px;
+}
+.ot-skip:hover { color: var(--text2); }
+.ot-next {
+  background: var(--accent); border: none; color: #fff; font-size: 11px; font-weight: 600;
+  padding: 5px 12px; border-radius: 14px; cursor: pointer; font-family: inherit;
+}
+.ot-next:hover { opacity: 0.88; }
+
+/* ── Celebration confetti ── */
+.confetti-burst { position: fixed; inset: 0; pointer-events: none; z-index: 9999; overflow: hidden; }
+.confetti-piece {
+  position: absolute; top: -10px; width: 7px; height: 12px; opacity: 0.9;
+  animation: confetti-fall 1.6s ease-in forwards;
+}
+@keyframes confetti-fall { to { transform: translateY(100vh) rotate(360deg); opacity: 0; } }
 
 /* ── Send / Save buttons ── */
 .send-btn, .save-note-btn {
@@ -439,6 +587,40 @@ code {
 }
 .save-settings-btn:hover { opacity: 0.85; }
 .settings-status { font-size: 12px; }
+.data-actions { display: flex; gap: 8px; margin-top: 10px; }
+.data-btn {
+  background: var(--surface); border: 1px solid var(--border); color: var(--text);
+  padding: 8px 14px; border-radius: var(--r-sm); font-size: 12px; font-weight: 600;
+  cursor: pointer; font-family: inherit; transition: border-color 0.15s, color 0.15s;
+}
+.data-btn:hover { border-color: var(--accent); color: var(--accent); }
+
+/* ── Command palette ── */
+.cmdk-overlay {
+  position: fixed; inset: 0; z-index: 10000;
+  background: rgba(0,0,0,0.35);
+  display: flex; align-items: flex-start; justify-content: center;
+  padding-top: 14%;
+}
+.cmdk-box {
+  width: 88%; max-width: 340px; max-height: 60%;
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--r);
+  box-shadow: 0 10px 34px rgba(0,0,0,0.28);
+  display: flex; flex-direction: column; overflow: hidden;
+}
+.cmdk-input {
+  width: 100%; background: transparent; border: none; border-bottom: 1px solid var(--border);
+  color: var(--text); font-size: 13px; padding: 12px 14px; outline: none; font-family: inherit;
+}
+.cmdk-list { overflow-y: auto; padding: 6px; }
+.cmdk-item {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 8px 10px; border-radius: var(--r-sm); font-size: 12.5px; color: var(--text);
+  cursor: pointer;
+}
+.cmdk-item.active, .cmdk-item:hover { background: rgba(var(--accent-rgb),0.12); color: var(--accent); }
+.cmdk-hint { font-size: 10.5px; color: var(--text3); flex-shrink: 0; }
+.cmdk-empty { padding: 14px; text-align: center; font-size: 12px; color: var(--text3); }
 
 /* Standalone window has no browser chrome around it — a hairline top edge
    keeps the header from blending into whatever sits behind the panel. */

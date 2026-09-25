@@ -25,3 +25,14 @@ window.addEventListener('mouseup', function () {
   if (isDown && !dragged) window.contexto.togglePanel();
   isDown = false; dragged = false;
 });
+
+// The panel (which holds the task data) pushes the due-task count here
+// whenever it changes — this is what stays visible even while the panel
+// itself is minimized.
+var ring = document.getElementById('ring');
+var dueBadge = document.getElementById('dueBadge');
+window.contexto.onDueCount(function (count) {
+  ring.classList.toggle('has-due', count > 0);
+  dueBadge.classList.toggle('show', count > 0);
+  dueBadge.textContent = count > 9 ? '9+' : String(count);
+});

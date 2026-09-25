@@ -17,6 +17,7 @@
         <span class="logo-text">Contexto <span class="logo-ai">AI</span></span>
       </div>
       <div class="header-right">
+        <span class="streak-badge" id="streakBadge" title="Days in a row you've cleared all your tasks" style="display:none"></span>
         <span class="clip-badge" id="clipCount">0 items</span>
         <button class="icon-btn" id="themeBtn" title="Toggle dark / light theme">
           <svg id="themeIconMoon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -25,6 +26,11 @@
           <svg id="themeIconSun" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none">
             <circle cx="12" cy="12" r="4"/>
             <path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/>
+          </svg>
+        </button>
+        <button class="icon-btn" id="cmdkBtn" title="Command palette (Ctrl/Cmd+K)">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="2" y="4" width="20" height="16" rx="2"/><path d="M6 9l3 3-3 3M13 15h5"/>
           </svg>
         </button>
         <button class="icon-btn" id="settingsBtn" title="Settings">
@@ -47,6 +53,15 @@
       </div>
     </header>
 
+    <!-- One-time welcome tips — shown once, then never again -->
+    <div class="onboard-tip" id="onboardTip" style="display:none">
+      <div class="ot-text" id="onboardTipText"></div>
+      <div class="ot-actions">
+        <button class="ot-skip" id="onboardSkip">Skip</button>
+        <button class="ot-next" id="onboardNext">Next</button>
+      </div>
+    </div>
+
     <!-- AI Status bar -->
     <div class="ai-status" id="aiStatus" style="display:none">
       <span class="ai-dot"></span>
@@ -55,14 +70,37 @@
 
     <!-- Composer -->
     <div class="composer">
-      <textarea id="noteInput" placeholder="Ask anything or save a note… e.g. what is my api key?" rows="2" spellcheck="false"></textarea>
+      <textarea id="noteInput" placeholder="Ask anything, save a note, or add a task… e.g. remind me to call mom tomorrow" rows="2" spellcheck="false"></textarea>
       <button class="send-btn" id="saveNoteBtn" title="Send (Enter)">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
           <line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/>
         </svg>
       </button>
     </div>
-    <div class="composer-hint" id="composerHint"></div>
+    <div class="composer-row">
+      <div class="composer-hint" id="composerHint"></div>
+      <button class="quick-task-btn" id="quickTaskBtn" title="Add a task manually — no AI needed">+ Task</button>
+    </div>
+
+    <!-- Manual task form — bypasses AI entirely, so it always works exactly
+         as typed, with or without an API key configured. -->
+    <div class="quick-task-form" id="quickTaskForm" style="display:none">
+      <input type="text" id="qtText" placeholder="Task description" autocomplete="off" spellcheck="false">
+      <div class="qt-row">
+        <input type="date" id="qtDate">
+        <input type="time" id="qtTime">
+        <select id="qtPriority" class="qt-priority" title="Priority">
+          <option value="">Normal</option>
+          <option value="medium">Medium</option>
+          <option value="high">High</option>
+        </select>
+        <label class="qt-recurring"><input type="checkbox" id="qtRecurring"> Repeat daily</label>
+      </div>
+      <div class="qt-actions">
+        <button class="qt-cancel" id="qtCancel">Cancel</button>
+        <button class="qt-save" id="qtSave">Add Task</button>
+      </div>
+    </div>
 
     <!-- Search -->
     <div class="search-wrap">
@@ -80,6 +118,7 @@
     <!-- Filter pills -->
     <div class="filters">
       <button class="pill active" data-filter="all">All</button>
+      <button class="pill" data-filter="task">Tasks</button>
       <button class="pill" data-filter="note">Notes</button>
       <button class="pill" data-filter="text">Clips</button>
       <button class="pill" data-filter="link">Links</button>
@@ -97,7 +136,12 @@
           </svg>
         </div>
         <p class="empty-title">Nothing here yet</p>
-        <p class="empty-sub">Copy text anywhere on your Mac, or type a note above to get started.</p>
+        <p class="empty-sub">Copy text anywhere on your Mac, or try one of these:</p>
+        <div class="empty-examples">
+          <button class="example-chip" data-example="my wifi password is hunter2">🔒 "my wifi password is hunter2"</button>
+          <button class="example-chip" data-example="what is my wifi password?">💬 "what is my wifi password?"</button>
+          <button class="example-chip" data-example="remind me to call mom tomorrow at 5pm">✅ "remind me to call mom tomorrow at 5pm"</button>
+        </div>
         <p class="empty-hotkey">Press <kbd>⇧⌘K</kbd> anytime to summon this panel</p>
       </div>
       <div id="clipsList"></div>
@@ -206,6 +250,24 @@
         <div class="settings-label">Privacy</div>
         <div class="settings-desc">All clipboard data and notes are stored only on this machine. When you ask a question, the top 8 most relevant items are sent as context to the LLM — nothing else. No analytics, no telemetry.</div>
       </div>
+
+      <div class="settings-section" style="margin-top:20px">
+        <div class="settings-label">Your Data</div>
+        <div class="settings-desc">Everything lives only on this machine — export a backup any time, or move it to another computer. Exported files include decrypted content, so keep them somewhere safe.</div>
+        <div class="data-actions">
+          <button class="data-btn" id="exportBtn">Export backup (.json)</button>
+          <button class="data-btn" id="importBtn">Import backup</button>
+          <input type="file" id="importFile" accept="application/json" style="display:none">
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Command palette — ⌘K / Ctrl+K -->
+  <div class="cmdk-overlay" id="cmdkOverlay" style="display:none">
+    <div class="cmdk-box">
+      <input type="text" id="cmdkInput" class="cmdk-input" placeholder="Type a command…" autocomplete="off" spellcheck="false">
+      <div class="cmdk-list" id="cmdkList"></div>
     </div>
   </div>
 

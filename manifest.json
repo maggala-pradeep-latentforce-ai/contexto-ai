@@ -11,7 +11,9 @@
     "offscreen",
     "sidePanel",
     "activeTab",
-    "tabs"
+    "tabs",
+    "notifications",
+    "alarms"
   ],
   "background": {
     "service_worker": "src/background/index.js",

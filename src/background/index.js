@@ -15,6 +15,11 @@ const MSG = {
   OFFSCREEN_READY: 'OFFSCREEN_READY',
   OPEN_SIDE_PANEL: 'OPEN_SIDE_PANEL',
   ADD_NOTE:        'ADD_NOTE',
+  ADD_TASK:        'ADD_TASK',
+  TOGGLE_TASK:     'TOGGLE_TASK',
+  RESCHEDULE_TASK: 'RESCHEDULE_TASK',
+  EXPORT_DATA:     'EXPORT_DATA',
+  IMPORT_DATA:     'IMPORT_DATA',
   QUERY_NOTES:     'QUERY_NOTES',
   AI_QUERY:        'AI_QUERY',
   SAVE_CONFIG:     'SAVE_CONFIG',
@@ -30,6 +35,11 @@ const OFFSCREEN_MSGS = new Set([
   MSG.CLEAR_ALL,
   MSG.GET_COUNT,
   MSG.ADD_NOTE,
+  MSG.ADD_TASK,
+  MSG.TOGGLE_TASK,
+  MSG.RESCHEDULE_TASK,
+  MSG.EXPORT_DATA,
+  MSG.IMPORT_DATA,
   MSG.QUERY_NOTES,
 ]);
 
@@ -335,13 +345,18 @@ async function orchestrate(userInput, allClips) {
     {
       role: 'system',
       content:
-        'You are an intent classifier for a personal clipboard+notes app. ' +
+        'You are an intent classifier for a personal clipboard+notes+tasks app. ' +
         'Reply with exactly one word: ' +
-        '"save" if the user is storing/stating brand-new information, ' +
+        '"task" if the user wants to add a to-do / reminder / action item — something ' +
+        'to DO (by a deadline, or repeating daily), not information to remember, ' +
+        '"save" if the user is storing/stating brand-new information to remember later, ' +
         '"edit" if the user wants to change/update/correct a previously saved note or clip to a new value, ' +
         '"delete" if the user wants to remove/delete/forget a previously saved note or clip, ' +
         'or "query" if the user is searching/asking about something. ' +
-        'Examples: "delete my wifi password" -> delete. "forget the note about the server ip" -> delete. ' +
+        'Examples: "remind me to call mom tomorrow" -> task. "todo: submit report by friday" -> task. ' +
+        '"every morning I should stretch" -> task. "I need to buy milk" -> task. ' +
+        '"my wifi password is hunter2" -> save (a fact, not an action). ' +
+        '"delete my wifi password" -> delete. "forget the note about the server ip" -> delete. ' +
         '"change my wifi password to xyz789" -> edit. "update the server ip to 10.0.0.5" -> edit. ' +
         'No other words.',
     },
@@ -349,9 +364,61 @@ async function orchestrate(userInput, allClips) {
   ], { maxTokens: 5, temperature: 0 });
 
   const intentWord = intentReply.toLowerCase();
-  const intent = intentWord.includes('delete') ? 'delete'
+  const intent = intentWord.includes('task') ? 'task'
+    : intentWord.includes('delete') ? 'delete'
     : intentWord.includes('edit') ? 'edit'
     : intentWord.includes('save') ? 'save' : 'query';
+
+  if (intent === 'task') {
+    // Resolve relative dates/times ("tomorrow", "10pm") against the real
+    // current date — the LLM has no clock of its own, see formatNow(). One
+    // message can describe several tasks (a numbered list, "and", etc.), so
+    // this always extracts a LIST, even for a single task.
+    const raw = await callLLM([
+      {
+        role: 'system',
+        content:
+          'Extract ALL to-do tasks from the user\'s message — there may be more than one ' +
+          '(e.g. a numbered or bulleted list, or several sentences). Today is: ' + formatNow() + '. ' +
+          'Reply with ONLY a JSON object, no commentary, no markdown fences: ' +
+          '{"tasks": [{"text": "<clean task description, no dates/times in it>", ' +
+          '"dueDate": "<YYYY-MM-DD, or null if no specific deadline>", ' +
+          '"dueTime": "<HH:MM in 24-hour time, or null if no specific time>", ' +
+          '"recurring": <true only if THIS task repeats every day — judge each task independently, ' +
+          'a "daily tasks" heading does not automatically make every item recurring if one sounds one-time>, ' +
+          '"priority": "<high, medium, or null — high only for words like urgent/asap/important/critical, ' +
+          'medium only if mildly emphasized, null for ordinary tasks — most tasks should be null>}]}. ' +
+          'Resolve relative dates ("tomorrow", "next friday") and times ("10pm", "at 9") into real values using today\'s date/time above. ' +
+          'Example: "remind me to call mom tomorrow at 3pm" -> ' +
+          '{"tasks":[{"text":"call mom","dueDate":"<tomorrow\'s date>","dueTime":"15:00","recurring":false,"priority":null}]}. ' +
+          'Example: "urgent: submit the report today, also every morning I should stretch" -> ' +
+          '{"tasks":[{"text":"submit the report","dueDate":"<today\'s date>","dueTime":null,"recurring":false,"priority":"high"},' +
+          '{"text":"stretch","dueDate":null,"dueTime":null,"recurring":true,"priority":null}]}.',
+      },
+      { role: 'user', content: input },
+    ], { maxTokens: 400, temperature: 0 });
+
+    let tasks = null;
+    try {
+      const m = raw.match(/\{[\s\S]*\}/);
+      const parsed = m ? JSON.parse(m[0]) : null;
+      if (parsed && Array.isArray(parsed.tasks) && parsed.tasks.length) tasks = parsed.tasks;
+    } catch { tasks = null; }
+
+    if (!tasks) tasks = [{ text: input, dueDate: null, dueTime: null, recurring: false, priority: null }];
+
+    return {
+      action: 'task',
+      intent,
+      tasks: tasks.map((t) => ({
+        text: (t && t.text) || input,
+        dueDate: (t && t.dueDate) || null,
+        dueTime: (t && t.dueTime) || null,
+        recurring: !!(t && t.recurring),
+        priority: (t && (t.priority === 'high' || t.priority === 'medium')) ? t.priority : null,
+      })),
+    };
+  }
 
   if (intent === 'save') {
     // 2a. Extract clean fact
@@ -385,9 +452,50 @@ async function orchestrate(userInput, allClips) {
     const matches = rankClips(input, allClips)
       .filter((c) => c._score > 0.05)
       .slice(0, 3)
-      .map((c) => ({ id: c.id, content: c.content, domain: c.domain, type: c.type, createdAt: c.createdAt, sensitive: c.sensitive }));
+      .map((c) => ({
+        id: c.id, content: c.content, domain: c.domain, type: c.type, createdAt: c.createdAt, sensitive: c.sensitive,
+        dueDate: c.dueDate, dueTime: c.dueTime, recurring: c.recurring,
+      }));
 
     if (!matches.length) return { action: 'edit', intent, matches: [] };
+
+    const top = matches[0];
+
+    // Editing a TASK means rescheduling it ("push this to tomorrow", "make
+    // it stop repeating") — a structured {dueDate,dueTime,recurring} change,
+    // not a text rewrite. Give the model the task's CURRENT schedule so it
+    // can carry over whatever the user didn't mention (e.g. "push to
+    // tomorrow" should keep the existing time), same date-resolution
+    // approach as task creation — resolved against the real current date.
+    if (top.type === 'task') {
+      const raw = await callLLM([
+        {
+          role: 'system',
+          content:
+            'The user wants to reschedule an existing task. Today is: ' + formatNow() + '. ' +
+            'The task currently has: dueDate=' + (top.dueDate || 'none') + ', dueTime=' + (top.dueTime || 'none') +
+            ', recurring=' + top.recurring + '. ' +
+            'Reply with ONLY a JSON object, no commentary: ' +
+            '{"dueDate": "<YYYY-MM-DD, or null for no deadline>", "dueTime": "<HH:MM 24-hour, or null>", "recurring": <true|false>}. ' +
+            'Keep any field the user does not mention unchanged from the current values above — ' +
+            'this is a partial edit, not a full replacement. ' +
+            'Example: current dueTime=22:00. User says "push this to tomorrow" -> dueDate becomes tomorrow\'s date, dueTime stays 22:00.',
+        },
+        { role: 'user', content: input },
+      ], { maxTokens: 150, temperature: 0 });
+
+      let sched = null;
+      try { const m = raw.match(/\{[\s\S]*\}/); sched = m ? JSON.parse(m[0]) : null; } catch { sched = null; }
+
+      return {
+        action: 'reschedule',
+        intent,
+        matches,
+        dueDate: sched && 'dueDate' in sched ? sched.dueDate : top.dueDate,
+        dueTime: sched && 'dueTime' in sched ? sched.dueTime : top.dueTime,
+        recurring: sched ? !!sched.recurring : top.recurring,
+      };
+    }
 
     const newContent = await callLLM([
       {
@@ -478,6 +586,18 @@ async function orchestrate(userInput, allClips) {
 chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
 chrome.action.onClicked.addListener((tab) => {
   chrome.sidePanel.open({ windowId: tab.windowId });
+});
+
+// ── Keep task due-time notifications running ──────────────────────────────────
+// The actual check lives in offscreen/index.js (that's where the clip data
+// is). Chrome can tear the offscreen document down when idle, and this
+// service worker itself can go dormant too — chrome.alarms wakes this SW
+// back up on a schedule even after that, and ensureOffscreen() recreates the
+// document if it's gone, so the notification check keeps running even with
+// the side panel closed.
+chrome.alarms.create('task-notify-tick', { periodInMinutes: 1 });
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name === 'task-notify-tick') ensureOffscreen().catch(() => {});
 });
 
 // ── Message routing ───────────────────────────────────────────────────────────
